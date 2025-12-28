@@ -123,8 +123,11 @@ const App: React.FC = () => {
         const data = snapshot.val();
         if (data) {
           setRoom(data);
-          // status가 playing일 때만 게임 컴포넌트 활성
-          setInGame(data.status === 'playing');
+          // 핵심 수정: playing일 때만 자동으로 게임 진입. 
+          // finished가 되어도 사용자가 직접 버튼을 누르기 전까지는 inGame을 false로 바꾸지 않음.
+          if (data.status === 'playing') {
+            setInGame(true);
+          }
           firstLoad = false;
         } else if (!firstLoad) {
           setRoom(null);
@@ -315,7 +318,6 @@ const App: React.FC = () => {
   };
 
   const startGame = async () => {
-    // room.status가 waiting일 때만 시작 가능하도록 체크 강화
     if (currentRoomId && room && room.status === 'waiting' && !isProcessing) {
       const playerIds = Object.keys(room.players || {});
       if (playerIds.length < 2) {
@@ -332,7 +334,6 @@ const App: React.FC = () => {
           sequence.push(currentX);
         }
 
-        // 플레이어들의 초기 상태도 다시 한 번 리셋 (확실하게)
         const updatedPlayers: Record<string, any> = {};
         playerIds.forEach(id => {
           updatedPlayers[id] = {
@@ -353,7 +354,6 @@ const App: React.FC = () => {
         });
       } catch (e) {
         console.error("Start game error:", e);
-        alert('게임을 시작하지 못했습니다. 다시 시도해주세요.');
       } finally {
         setIsProcessing(false);
       }
@@ -364,7 +364,9 @@ const App: React.FC = () => {
     const currentUser = auth.currentUser;
     if (!currentUser || !profile) return;
     
-    setInGame(false); // 먼저 게임 컴포넌트 언마운트
+    // 사용자가 로비/재대결을 선택했으므로 게임 화면 해제
+    setInGame(false); 
+    
     if (isPractice) {
       setIsPractice(false);
       return;
@@ -373,19 +375,15 @@ const App: React.FC = () => {
     if (!room || !currentRoomId) return;
 
     // 점수 업데이트 (Firestore)
-    try {
-      await updateDoc(doc(db, 'users', currentUser.uid), {
-        totalGames: increment(1),
-        winCount: isWinner ? increment(1) : increment(0)
-      });
-    } catch (e) {
-      console.error("Score update error:", e);
-    }
+    updateDoc(doc(db, 'users', currentUser.uid), {
+      totalGames: increment(1),
+      winCount: isWinner ? increment(1) : increment(0)
+    });
 
     if (action === 'lobby') {
       await leaveRoom(false);
     } else {
-      // 재대결(Rematch) 선택 시, 방장이 방 상태를 'waiting'으로 돌림
+      // 방장인 경우 방 상태를 'waiting'으로 돌려 재대결 준비
       if (room.hostId === currentUser.uid) {
         setIsProcessing(true);
         try {
@@ -399,7 +397,7 @@ const App: React.FC = () => {
               facing: 1
             };
           });
-          // stairSequence를 null로 밀어서 이전 게임 데이터가 영향을 주지 않도록 함
+          
           await update(ref(rtdb, `rooms/${currentRoomId}`), { 
             status: 'waiting',
             players: resetPlayers,
@@ -431,6 +429,7 @@ const App: React.FC = () => {
     }
   };
 
+  // 이미지 처리 관련 함수들
   const processAndSaveImage = async (imageSrc: string) => {
     if (!user || !profile) return;
     setIsProcessing(true);
@@ -505,7 +504,7 @@ const App: React.FC = () => {
       if (ctx) {
         const startX = (video.videoWidth - size) / 2;
         const startY = (video.videoHeight - size) / 2;
-        ctx.drawImage(video, startX, startY, size, size, 0, 0, size, size);
+        ctx.drawImage(video, startY, startX, size, size, 0, 0, size, size);
         processAndSaveImage(canvas.toDataURL('image/jpeg'));
         closeCamera();
       }
@@ -706,7 +705,6 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* Kakao Adfit Area */}
         <div className="flex flex-col items-center py-4 mt-6 overflow-hidden">
           <span className="text-[10px] text-gray-300 font-bold mb-1 uppercase tracking-widest">Advertisement</span>
           <div className="bg-white/50 rounded-xl p-1 shadow-inner">
