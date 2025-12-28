@@ -610,6 +610,17 @@ const App: React.FC = () => {
              </div>
           </div>
         )}
+
+        {/* Kakao Adfit Area */}
+        <div className="flex flex-col items-center py-4 mt-6 overflow-hidden">
+          <span className="text-[10px] text-gray-300 font-bold mb-1 uppercase tracking-widest">Advertisement</span>
+          <div className="bg-white/50 rounded-xl p-1 shadow-inner">
+            <ins className="kakao_ad_area" style={{ display: 'none' }}
+              data-ad-unit="DAN-R5KFaFpjBe5JJu3n"
+              data-ad-width="320"
+              data-ad-height="100"></ins>
+          </div>
+        </div>
       </main>
 
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-4 border-pink-50 h-20 flex items-center justify-around z-50 shadow-2xl px-4 rounded-t-3xl">

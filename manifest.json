@@ -1,0 +1,24 @@
+
+{
+  "short_name": "무한의계단",
+  "name": "귀여운 친구들 무한의 계단: 실시간 대결",
+  "icons": [
+    {
+      "src": "https://api.dicebear.com/7.x/avataaars/png?seed=rabbit&backgroundColor=fdf2f8&size=192",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://api.dicebear.com/7.x/avataaars/png?seed=rabbit&backgroundColor=fdf2f8&size=512",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#fdf2f8",
+  "background_color": "#fdf2f8",
+  "orientation": "portrait",
+  "description": "귀여운 동물 친구들과 즐기는 실시간 무한의 계단 오르기 대결 게임"
+}
