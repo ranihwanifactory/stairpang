@@ -21,6 +21,7 @@ const App: React.FC = () => {
   const [view, setView] = useState<'lobby' | 'ranking' | 'room'>('lobby');
   const [isProcessing, setIsProcessing] = useState(false);
   const [inputCode, setInputCode] = useState('');
+  const [copyFeedback, setCopyFeedback] = useState(false);
   
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [showPhotoOptions, setShowPhotoOptions] = useState(false);
@@ -254,6 +255,28 @@ const App: React.FC = () => {
       alert('방을 만들지 못했습니다. 잠시 후 다시 시도해주세요!');
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const shareRoom = async () => {
+    if (!currentRoomId || !room) return;
+    const shareUrl = `${window.location.origin}/#${currentRoomId}`;
+    const shareData = {
+      title: '무한의 계단 대결 초대! 🐰',
+      text: `${profile?.displayName}님이 대결을 신청했어요! 방 번호: ${room.shortCode}`,
+      url: shareUrl,
+    };
+
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+      } else {
+        await navigator.clipboard.writeText(shareUrl);
+        setCopyFeedback(true);
+        setTimeout(() => setCopyFeedback(false), 2000);
+      }
+    } catch (err) {
+      console.error('Share failed:', err);
     }
   };
 
@@ -549,11 +572,18 @@ const App: React.FC = () => {
         )}
 
         {view === 'room' && room && (
-          <div className="bg-white p-6 rounded-3xl shadow-xl text-center border-2 border-sky-100 animate-in zoom-in duration-300">
-            <div className="bg-yellow-100 py-4 rounded-2xl mb-6 border-2 border-yellow-200">
+          <div className="bg-white p-6 rounded-3xl shadow-xl text-center border-2 border-sky-100 animate-in zoom-in duration-300 relative">
+            <div className="bg-yellow-100 py-4 rounded-2xl mb-4 border-2 border-yellow-200 relative group">
               <p className="text-xs text-yellow-600 font-bold mb-1">우리 방 번호</p>
               <h2 className="text-4xl sm:text-5xl font-black text-yellow-700 tracking-widest">{room.shortCode}</h2>
             </div>
+
+            <button 
+              onClick={shareRoom}
+              className="w-full flex items-center justify-center gap-2 bg-sky-100 text-sky-600 py-3 rounded-2xl font-bold text-sm mb-6 hover:bg-sky-200 transition-colors active:scale-95"
+            >
+              <span>{copyFeedback ? '✅ 복사 완료!' : '🔗 친구 초대 링크 보내기'}</span>
+            </button>
             
             <div className="grid grid-cols-2 gap-4 sm:gap-6 mb-10">
               {Object.values(room.players || {}).map((p: any) => (
