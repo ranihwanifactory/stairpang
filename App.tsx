@@ -123,7 +123,7 @@ const App: React.FC = () => {
         const data = snapshot.val();
         if (data) {
           setRoom(data);
-          // 상태가 playing일 때만 게임 진입
+          // status가 playing일 때만 게임 컴포넌트 활성
           setInGame(data.status === 'playing');
           firstLoad = false;
         } else if (!firstLoad) {
@@ -315,8 +315,10 @@ const App: React.FC = () => {
   };
 
   const startGame = async () => {
-    if (currentRoomId && room && !isProcessing) {
-      if (Object.keys(room.players).length < 2) {
+    // room.status가 waiting일 때만 시작 가능하도록 체크 강화
+    if (currentRoomId && room && room.status === 'waiting' && !isProcessing) {
+      const playerIds = Object.keys(room.players || {});
+      if (playerIds.length < 2) {
         alert('친구와 함께하려면 최소 2명이 필요해요!');
         return;
       }
@@ -329,15 +331,29 @@ const App: React.FC = () => {
           if (Math.random() > 0.7) currentX = currentX === 1 ? 0 : 1;
           sequence.push(currentX);
         }
-        // 확실히 playing 상태로 변경
+
+        // 플레이어들의 초기 상태도 다시 한 번 리셋 (확실하게)
+        const updatedPlayers: Record<string, any> = {};
+        playerIds.forEach(id => {
+          updatedPlayers[id] = {
+            ...room.players[id],
+            currentFloor: 0,
+            facing: 1,
+            isFinished: false,
+            isReady: false
+          };
+        });
+
         await update(ref(rtdb, `rooms/${currentRoomId}`), { 
           status: 'playing',
           stairSequence: sequence,
+          players: updatedPlayers,
           winnerId: null,
           loserId: null
         });
       } catch (e) {
         console.error("Start game error:", e);
+        alert('게임을 시작하지 못했습니다. 다시 시도해주세요.');
       } finally {
         setIsProcessing(false);
       }
@@ -348,7 +364,7 @@ const App: React.FC = () => {
     const currentUser = auth.currentUser;
     if (!currentUser || !profile) return;
     
-    setInGame(false);
+    setInGame(false); // 먼저 게임 컴포넌트 언마운트
     if (isPractice) {
       setIsPractice(false);
       return;
@@ -356,16 +372,20 @@ const App: React.FC = () => {
 
     if (!room || !currentRoomId) return;
 
-    // 점수 업데이트 (비동기)
-    updateDoc(doc(db, 'users', currentUser.uid), {
-      totalGames: increment(1),
-      winCount: isWinner ? increment(1) : increment(0)
-    });
+    // 점수 업데이트 (Firestore)
+    try {
+      await updateDoc(doc(db, 'users', currentUser.uid), {
+        totalGames: increment(1),
+        winCount: isWinner ? increment(1) : increment(0)
+      });
+    } catch (e) {
+      console.error("Score update error:", e);
+    }
 
     if (action === 'lobby') {
       await leaveRoom(false);
     } else {
-      // 재대결 시 방장이 방을 waiting 상태로 초기화
+      // 재대결(Rematch) 선택 시, 방장이 방 상태를 'waiting'으로 돌림
       if (room.hostId === currentUser.uid) {
         setIsProcessing(true);
         try {
@@ -379,6 +399,7 @@ const App: React.FC = () => {
               facing: 1
             };
           });
+          // stairSequence를 null로 밀어서 이전 게임 데이터가 영향을 주지 않도록 함
           await update(ref(rtdb, `rooms/${currentRoomId}`), { 
             status: 'waiting',
             players: resetPlayers,
@@ -648,8 +669,8 @@ const App: React.FC = () => {
               {room.hostId === auth.currentUser?.uid ? (
                 <button 
                   onClick={startGame} 
-                  disabled={Object.keys(room.players || {}).length < 2 || isProcessing} 
-                  className={`w-full py-4 sm:py-5 rounded-3xl text-white font-bold text-xl sm:text-2xl shadow-lg border-b-8 transition-all active:translate-y-2 active:border-b-0 ${Object.keys(room.players || {}).length < 2 || isProcessing ? 'bg-gray-300 border-gray-400' : 'bg-pink-500 border-pink-700 hover:bg-pink-600'}`}
+                  disabled={Object.keys(room.players || {}).length < 2 || isProcessing || room.status !== 'waiting'} 
+                  className={`w-full py-4 sm:py-5 rounded-3xl text-white font-bold text-xl sm:text-2xl shadow-lg border-b-8 transition-all active:translate-y-2 active:border-b-0 ${Object.keys(room.players || {}).length < 2 || isProcessing || room.status !== 'waiting' ? 'bg-gray-300 border-gray-400 cursor-not-allowed' : 'bg-pink-500 border-pink-700 hover:bg-pink-600'}`}
                 >
                   {Object.keys(room.players || {}).length < 2 ? '친구를 더 기다려요' : isProcessing ? '준비 중...' : '게임 시작! 🎉'}
                 </button>
