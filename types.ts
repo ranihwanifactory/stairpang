@@ -7,7 +7,7 @@ export interface UserProfile {
   winCount: number;
   totalGames: number;
   selectedCharacter: string;
-  customCharacterURL?: string; // 사용자가 업로드한 커스텀 이미지
+  customCharacterURL?: string;
 }
 
 export interface Room {
@@ -17,7 +17,9 @@ export interface Room {
   hostName: string;
   status: 'waiting' | 'playing' | 'finished';
   players: Record<string, PlayerState>;
-  stairSequence?: number[]; // 모든 플레이어가 공유할 계단 배열 (0: 왼쪽, 1: 오른쪽)
+  stairSequence?: number[];
+  winnerId?: string; // 승리자 UID
+  loserId?: string;  // 패배자 UID
   createdAt: number;
 }
 
