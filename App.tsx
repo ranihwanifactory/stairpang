@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { auth, db, rtdb } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, getDoc, updateDoc, collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
@@ -21,6 +21,7 @@ const App: React.FC = () => {
   const [view, setView] = useState<'lobby' | 'ranking' | 'room'>('lobby');
   const [isProcessing, setIsProcessing] = useState(false);
   const [inputCode, setInputCode] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (u) => {
@@ -109,6 +110,31 @@ const App: React.FC = () => {
     }
   }, [currentRoomId]);
 
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user || !profile) return;
+
+    setIsProcessing(true);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const base64 = event.target?.result as string;
+      await updateDoc(doc(db, 'users', user.uid), {
+        customCharacterURL: base64,
+        selectedCharacter: 'custom'
+      });
+      setProfile({ ...profile, customCharacterURL: base64, selectedCharacter: 'custom' });
+      
+      if (currentRoomId) {
+        await update(ref(rtdb, `rooms/${currentRoomId}/players/${user.uid}`), {
+          characterId: 'custom',
+          customCharacterURL: base64
+        });
+      }
+      setIsProcessing(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const createRoom = async () => {
     const currentUser = auth.currentUser;
     if (!currentUser || !profile || isProcessing) return;
@@ -132,6 +158,7 @@ const App: React.FC = () => {
             displayName: profile.displayName || currentUser.displayName || '익명',
             photoURL: profile.photoURL || currentUser.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${myUid}`,
             characterId: profile.selectedCharacter,
+            customCharacterURL: profile.customCharacterURL || null,
             currentFloor: 0,
             isReady: false,
             isFinished: false
@@ -163,6 +190,7 @@ const App: React.FC = () => {
         displayName: profile.displayName || currentUser.displayName || '익명',
         photoURL: profile.photoURL || currentUser.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${myUid}`,
         characterId: profile.selectedCharacter,
+        customCharacterURL: profile.customCharacterURL || null,
         currentFloor: 0,
         isReady: false,
         isFinished: false
@@ -218,13 +246,20 @@ const App: React.FC = () => {
   };
 
   const selectCharacter = async (charId: string) => {
+    if (charId === 'custom') {
+      fileInputRef.current?.click();
+      return;
+    }
     const currentUser = auth.currentUser;
     if (!profile || !currentUser) return;
     const newProfile = { ...profile, selectedCharacter: charId };
     setProfile(newProfile);
     await updateDoc(doc(db, 'users', currentUser.uid), { selectedCharacter: charId });
     if (currentRoomId) {
-      await update(ref(rtdb, `rooms/${currentRoomId}/players/${currentUser.uid}`), { characterId: charId });
+      await update(ref(rtdb, `rooms/${currentRoomId}/players/${currentUser.uid}`), {
+        characterId: charId,
+        customCharacterURL: null
+      });
     }
   };
 
@@ -273,6 +308,7 @@ const App: React.FC = () => {
       uid={user.uid} 
       characterId={profile.selectedCharacter} 
       onFinish={handleGameFinish} 
+      customImageUrl={profile.customCharacterURL}
     />;
   }
 
@@ -292,19 +328,26 @@ const App: React.FC = () => {
       <main className="max-w-md mx-auto p-4 space-y-4 sm:space-y-6">
         {view === 'lobby' && (
           <>
-            <section className="bg-white p-4 sm:p-6 rounded-3xl shadow-xl border-b-8 border-pink-100 text-center">
+            <section className="bg-white p-4 sm:p-6 rounded-3xl shadow-xl border-b-8 border-pink-100 text-center relative overflow-hidden">
+              <input type="file" ref={fileInputRef} onChange={handlePhotoUpload} accept="image/*" className="hidden" />
               <h2 className="text-lg sm:text-xl font-bold text-gray-800 mb-3">내 캐릭터 바꾸기</h2>
-              <div className="grid grid-cols-4 gap-2 sm:gap-3">
+              <div className="grid grid-cols-5 gap-2 sm:gap-3 overflow-x-auto pb-2">
                 {CHARACTERS.map(char => (
                   <button 
                     key={char.id}
                     onClick={() => selectCharacter(char.id)}
-                    className={`p-2 sm:p-3 rounded-2xl text-2xl sm:text-3xl transition-all flex items-center justify-center h-14 sm:h-16 ${profile?.selectedCharacter === char.id ? 'bg-pink-100 border-2 border-pink-400 scale-105 sm:scale-110 shadow-md' : 'bg-gray-50'}`}
+                    className={`p-2 rounded-2xl text-2xl transition-all flex flex-col items-center justify-center min-w-[60px] ${profile?.selectedCharacter === char.id ? 'bg-pink-100 border-2 border-pink-400 scale-105 shadow-md' : 'bg-gray-50'}`}
                   >
-                    <span className="text-3xl sm:text-4xl">{char.emoji}</span>
+                    <span className="text-3xl">
+                      {char.id === 'custom' && profile?.customCharacterURL ? (
+                        <img src={profile.customCharacterURL} className="w-10 h-10 rounded-full object-cover border-2 border-white" alt="custom" />
+                      ) : char.emoji}
+                    </span>
+                    <span className="text-[10px] mt-1 text-gray-400 font-bold">{char.id === 'custom' ? '내 사진' : char.name.split(' ')[1]}</span>
                   </button>
                 ))}
               </div>
+              {isProcessing && <div className="absolute inset-0 bg-white/60 backdrop-blur-sm flex items-center justify-center font-bold text-pink-500">사진 처리 중... 📸</div>}
             </section>
 
             <div className="grid grid-cols-2 gap-3 sm:gap-4">
@@ -318,7 +361,6 @@ const App: React.FC = () => {
               </button>
             </div>
 
-            {/* 방 번호로 입장 섹션: 위치 이동 및 모바일 최적화 */}
             <section className="bg-yellow-100 p-4 sm:p-6 rounded-3xl shadow-lg border-2 border-yellow-200">
                <h3 className="text-center font-bold text-yellow-700 mb-3 text-sm sm:text-base flex items-center justify-center gap-2">
                  <span className="text-xl">🔢</span> 친구 방 번호로 입장!
@@ -376,17 +418,17 @@ const App: React.FC = () => {
                 {Object.values(room.players).map((p: any) => (
                   <div key={p.uid} className="flex flex-col items-center gap-1 sm:gap-2 p-3 sm:p-4 bg-gray-50 rounded-2xl relative">
                     {p.uid === room.hostId && <span className="absolute -top-1 -left-1 sm:-top-2 sm:-left-2 text-xl sm:text-2xl">👑</span>}
-                    <img src={p.photoURL} className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-4 border-white shadow-md bg-white" alt="" />
-                    <span className="absolute bottom-10 right-3 sm:bottom-12 sm:right-4 drop-shadow-lg">
-                       {CHARACTERS.find(c => c.id === p.characterId)?.emoji || '🐰'}
-                    </span>
+                    <div className="relative">
+                       {p.characterId === 'custom' && p.customCharacterURL ? (
+                         <img src={p.customCharacterURL} className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-4 border-white shadow-md object-cover bg-white" alt="" />
+                       ) : (
+                         <img src={p.photoURL} className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-4 border-white shadow-md bg-white" alt="" />
+                       )}
+                       <span className="absolute -bottom-1 -right-1 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-md border border-gray-100">
+                         {CHARACTERS.find(c => c.id === p.characterId)?.emoji || '🐰'}
+                       </span>
+                    </div>
                     <span className="text-sm sm:text-base font-bold text-gray-700 truncate w-full">{p.displayName}</span>
-                  </div>
-                ))}
-                {Array.from({ length: Math.max(0, 4 - Object.keys(room.players).length) }).map((_, i) => (
-                  <div key={i} className="flex flex-col items-center gap-1 sm:gap-2 p-3 sm:p-4 border-2 border-dashed border-gray-100 rounded-2xl opacity-40">
-                    <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gray-100 flex items-center justify-center"><span className="text-2xl sm:text-3xl text-gray-300">?</span></div>
-                    <span className="text-[10px] sm:text-xs text-gray-300 font-bold">기다리는 중</span>
                   </div>
                 ))}
               </div>
@@ -415,7 +457,10 @@ const App: React.FC = () => {
                   <div key={r.uid} className="flex items-center justify-between p-3 sm:p-4 rounded-2xl bg-pink-50/30 border border-pink-100">
                     <div className="flex items-center gap-3 sm:gap-4">
                       <span className={`text-lg sm:text-xl font-bold w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-full ${i === 0 ? 'bg-yellow-400 text-white' : 'bg-white text-pink-300'}`}>{i + 1}</span>
-                      <img src={r.photoURL} className="w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 border-white" alt="" />
+                      <div className="relative">
+                        <img src={r.customCharacterURL || r.photoURL} className="w-10 h-10 sm:w-12 sm:h-12 rounded-full border-2 border-white object-cover" alt="" />
+                        <span className="absolute -bottom-1 -right-1 text-[10px]">{CHARACTERS.find(c => c.id === r.selectedCharacter)?.emoji}</span>
+                      </div>
                       <span className="font-bold text-gray-700 text-sm sm:text-base">{r.displayName}</span>
                     </div>
                     <span className="text-pink-500 font-bold text-lg sm:text-xl">{r.winCount}승</span>

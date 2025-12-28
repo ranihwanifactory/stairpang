@@ -7,11 +7,12 @@ export interface UserProfile {
   winCount: number;
   totalGames: number;
   selectedCharacter: string;
+  customCharacterURL?: string; // 사용자가 업로드한 커스텀 이미지
 }
 
 export interface Room {
   id: string;
-  shortCode: string; // 4자리 방번호 추가
+  shortCode: string;
   hostId: string;
   hostName: string;
   status: 'waiting' | 'playing' | 'finished';
@@ -23,11 +24,12 @@ export interface PlayerState {
   uid: string;
   displayName: string;
   photoURL: string;
-  character: string;
+  characterId: string; // character -> characterId 로 통일
   currentFloor: number;
   isReady: boolean;
   isFinished: boolean;
   facing?: number;
+  customCharacterURL?: string; // 실시간 대결을 위한 커스텀 이미지 전달용
 }
 
 export const CHARACTERS = [
@@ -38,5 +40,6 @@ export const CHARACTERS = [
   { id: 'frog', emoji: '🐸', name: '개굴 개구리' },
   { id: 'monkey', emoji: '🐵', name: '재주 원숭이' },
   { id: 'chick', emoji: '🐥', name: '삐약 병아리' },
-  { id: 'fox', emoji: '🦊', name: '똑똑 여우' }
+  { id: 'fox', emoji: '🦊', name: '똑똑 여우' },
+  { id: 'custom', emoji: '📸', name: '내 사진' }
 ];
