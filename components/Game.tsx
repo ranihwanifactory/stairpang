@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { playSound } from '../utils/audio';
 import { rtdb } from '../firebase';
-import { ref, update, onValue, off } from 'firebase/database';
+import { ref, update, onValue, off, get } from 'firebase/database';
 import { CharacterSprite } from './CharacterSprite';
 
 interface GameProps {
@@ -11,7 +10,7 @@ interface GameProps {
   characterId: string;
   onFinish: (score: number, isWinner: boolean) => void;
   customImageUrl?: string;
-  stairSequence?: number[]; // 공유 계단 시퀀스 주입
+  stairSequence?: number[];
 }
 
 interface OpponentData {
@@ -47,15 +46,11 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
       setStairs(stairSequence);
       return;
     }
-
     const startDir = 1;
     const newStairs = [startDir, startDir]; 
     let currentX = startDir;
     for (let i = 2; i < 1000; i++) {
-      const change = Math.random() > 0.7;
-      if (change) {
-        currentX = currentX === 1 ? 0 : 1;
-      }
+      if (Math.random() > 0.7) currentX = currentX === 1 ? 0 : 1;
       newStairs.push(currentX);
     }
     setStairs(newStairs);
@@ -76,30 +71,38 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
     generateStairs();
   }, [generateStairs]);
 
-  // 게임 종료 로직
+  // 실패했을 때 호출되는 함수
   const gameOver = useCallback(async () => {
-    if (!gameActive || result) return;
+    if (!gameActive || result || isDead) return;
     
+    setIsDead(true);
     setGameActive(false);
     if (timerRef.current) clearInterval(timerRef.current);
 
     if (isPractice) {
-      setIsDead(true);
       setResult('lose');
       playSound('lose');
       return;
     }
 
-    // 상대방 찾기 (1:1 기준)
-    const oppIds = Object.keys(opponentFloors);
-    const winnerId = oppIds[0] || 'unknown';
-
-    await update(ref(rtdb, `rooms/${roomId}`), {
-      status: 'finished',
-      winnerId: winnerId,
-      loserId: uid
-    });
-  }, [roomId, uid, opponentFloors, isPractice, gameActive, result]);
+    // 1:1 대결에서 내가 죽으면 내가 패배자, 상대방이 승리자
+    try {
+      const roomSnap = await get(ref(rtdb, `rooms/${roomId}`));
+      const roomData = roomSnap.val();
+      if (roomData && roomData.status !== 'finished') {
+        const players = roomData.players;
+        const opponentId = Object.keys(players).find(id => id !== uid);
+        
+        await update(ref(rtdb, `rooms/${roomId}`), {
+          status: 'finished',
+          winnerId: opponentId || 'unknown',
+          loserId: uid
+        });
+      }
+    } catch (e) {
+      console.error("GameOver update error:", e);
+    }
+  }, [roomId, uid, isPractice, gameActive, result, isDead]);
 
   useEffect(() => {
     generateStairs();
@@ -132,12 +135,14 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
       const roomRef = ref(rtdb, `rooms/${roomId}`);
       roomStatusListener = onValue(roomRef, (snapshot) => {
         const data = snapshot.val();
-        if (data && data.status === 'finished') {
+        if (data && data.status === 'finished' && !result) {
           setGameActive(false);
+          if (timerRef.current) clearInterval(timerRef.current);
+          
           if (data.winnerId === uid) {
             setResult('win');
             playSound('win');
-          } else if (data.loserId === uid) {
+          } else {
             setResult('lose');
             setIsDead(true);
             playSound('lose');
@@ -160,18 +165,17 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
 
     return () => {
       if (!isPractice) {
-        off(ref(rtdb, `rooms/${roomId}/players`), 'value', playersListener);
-        off(ref(rtdb, `rooms/${roomId}`), 'value', roomStatusListener);
+        off(ref(rtdb, `rooms/${roomId}/players`));
+        off(ref(rtdb, `rooms/${roomId}`));
       }
       clearInterval(cdInterval);
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [roomId, uid, generateStairs, isPractice]);
+  }, [roomId, uid, generateStairs, isPractice, result]);
 
-  // 타이머 실행 이펙트
+  // 타이머 실행 (0.1초마다 차감)
   useEffect(() => {
     if (gameActive && !isDead && !result) {
-      // 100ms 마다 0.1씩 감소 (30초 전체)
       timerRef.current = setInterval(() => {
         setTimeLeft(prev => {
           const nextVal = prev - 0.1;
@@ -195,7 +199,6 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
       nextFacing = nextFacing === 1 ? 0 : 1;
       playSound('turn');
     }
-
     const nextFloor = floorRef.current + 1;
     
     if (stairs[nextFloor] === nextFacing) {
@@ -205,17 +208,14 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
       setFacing(nextFacing);
       setIsMoving(true);
       
-      if (type === 'up') {
-        playSound('jump');
-      }
-      
+      if (type === 'up') playSound('jump');
       if (movingTimeoutRef.current) clearTimeout(movingTimeoutRef.current);
       movingTimeoutRef.current = setTimeout(() => setIsMoving(false), 150);
 
-      // 계단을 오를 때마다 시간 보너스
+      // 시간 보너스
       setTimeLeft(prev => Math.min(30, prev + (isPractice ? 0.4 : 0.25))); 
 
-      if (!isPractice && nextFloor - lastSyncFloor.current >= 2) {
+      if (!isPractice && (nextFloor - lastSyncFloor.current >= 2)) {
         lastSyncFloor.current = nextFloor;
         update(ref(rtdb, `rooms/${roomId}/players/${uid}`), {
           currentFloor: nextFloor,
@@ -249,72 +249,76 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
 
   return (
     <div className={`fixed inset-0 overflow-hidden ${isPractice ? 'bg-[#7cfc00]' : 'bg-[#a0e9ff]'} flex flex-col items-center font-['Jua'] select-none`}>
-      <div className="absolute inset-0 pointer-events-none">
-        <div className={`absolute bottom-0 w-full h-64 bg-gradient-to-t ${isPractice ? 'from-green-600' : 'from-[#3a80d2]'} to-transparent opacity-30`}></div>
+      {/* 타이머 바 */}
+      <div className="absolute top-16 left-1/2 -translate-x-1/2 w-[80%] max-w-md h-6 bg-white/30 rounded-full border-4 border-white shadow-lg z-50 overflow-hidden backdrop-blur-sm">
+        <div 
+          className={`h-full transition-all duration-100 ease-linear ${timeLeft < 5 ? 'bg-red-500' : isPractice ? 'bg-green-400' : 'bg-yellow-400'}`}
+          style={{ width: `${(timeLeft / 30) * 100}%` }}
+        />
       </div>
 
-      <div className="absolute top-6 left-0 right-0 px-6 flex justify-between items-start z-40">
-        <div className="flex flex-col gap-2">
-          <div className="bg-white/95 px-4 sm:px-6 py-2 rounded-2xl font-bold text-2xl sm:text-3xl shadow-[0_4px_0_#ccc] text-[#333] border-2 border-white">
-            {floor} <span className="text-xs sm:text-sm uppercase">Stairs</span>
-          </div>
-          <div className="w-40 sm:w-48 h-5 sm:h-6 bg-gray-200/50 rounded-full border-2 border-white overflow-hidden shadow-inner backdrop-blur-sm">
-            <div 
-              className={`h-full transition-[width] duration-100 ease-linear ${timeLeft < 5 ? 'bg-red-500' : isPractice ? 'bg-green-400' : 'bg-yellow-400'}`}
-              style={{ width: `${(timeLeft / 30) * 100}%` }}
-            ></div>
-          </div>
+      <div className="absolute top-6 left-6 z-40">
+        <div className="bg-white/95 px-4 py-2 rounded-2xl font-bold text-3xl shadow-[0_4px_0_#ccc] text-[#333] border-2 border-white">
+          {floor} <span className="text-sm">F</span>
         </div>
-        
-        <div className="flex flex-col items-end gap-2">
-           <div className={`${isPractice ? 'bg-green-600' : 'bg-pink-500'} text-white px-3 sm:px-4 py-1 rounded-full text-[10px] sm:text-xs font-bold shadow-md border-2 border-white/30`}>
-             {isPractice ? '연습 중 🌱' : '실시간 대결 🏁'}
-           </div>
-           {!isPractice && (Object.entries(opponentFloors) as [string, OpponentData][]).map(([id, data]) => (
-             <div key={id} className="bg-white/90 px-2 sm:px-3 py-1 rounded-lg text-[10px] sm:text-xs font-bold border-2 border-pink-200 flex items-center gap-2 animate-bounce">
-               <span className="w-5 h-5 flex items-center justify-center">
-                 <CharacterSprite type={data.charId} facing={1} isMoving={false} size={20} customImageUrl={data.customImageUrl} />
-               </span>
-               <span className="text-pink-600 truncate max-w-[60px]">{data.name}</span>
-               <span>{data.floor}F</span>
-             </div>
-           ))}
-        </div>
+      </div>
+      
+      <div className="absolute top-6 right-6 flex flex-col items-end gap-2 z-40">
+        {isPractice ? (
+          <div className="bg-green-600 text-white px-4 py-1 rounded-full text-xs font-bold shadow-md border-2 border-white/30 animate-pulse">연습 중 🌱</div>
+        ) : (
+          /* FIX: Explicitly type data to OpponentData to resolve 'unknown' property errors */
+          Object.values(opponentFloors).map((data: OpponentData) => (
+            <div key={data.uid} className="bg-white/90 px-3 py-1 rounded-xl text-xs font-bold border-2 border-pink-200 flex items-center gap-2 shadow-sm">
+              <span className="w-5 h-5 flex items-center justify-center">
+                <CharacterSprite type={data.charId} facing={1} isMoving={false} size={20} customImageUrl={data.customImageUrl} />
+              </span>
+              <span className="text-pink-600 truncate max-w-[60px]">{data.name}</span>
+              <span className="bg-pink-100 px-2 rounded-full">{data.floor}F</span>
+            </div>
+          ))
+        )}
       </div>
 
       {countdown > 0 && (
-        <div className="absolute inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center">
-           <div className="text-white text-9xl font-bold animate-bounce drop-shadow-[0_10px_10px_rgba(0,0,0,0.5)]">
+        <div className="absolute inset-0 z-50 bg-black/50 backdrop-blur-md flex items-center justify-center">
+           <div className="text-white text-9xl font-bold animate-ping drop-shadow-2xl">
              {countdown}
            </div>
         </div>
       )}
 
       {result && (
-        <div className="absolute inset-0 z-50 bg-black/40 backdrop-blur-md flex flex-col items-center justify-center p-4">
-           <div className="bg-white p-6 sm:p-8 rounded-[40px] shadow-2xl border-8 border-pink-100 text-center animate-in zoom-in duration-300 w-full max-w-sm">
-             <h2 className={`text-5xl sm:text-6xl ${result === 'win' ? 'text-yellow-500' : 'text-red-500'} mb-2`}>
-               {result === 'win' ? '승리! 🏆' : '패배... 😵'}
-             </h2>
-             <p className="text-xl sm:text-2xl text-gray-700">{result === 'win' ? '와우! 당신이 이겼어요!' : '아쉬워요! 다음엔 꼭!'}</p>
-             <div className="my-5 sm:my-6 p-4 bg-gray-50 rounded-3xl">
-                <p className="text-xs sm:text-sm text-gray-400 uppercase tracking-tighter">Final Floor</p>
-                <p className="text-4xl sm:text-5xl text-pink-500 font-bold">{floor}층</p>
+        <div className="absolute inset-0 z-[100] bg-black/60 backdrop-blur-lg flex flex-col items-center justify-center p-6">
+           <div className="bg-white p-8 rounded-[40px] shadow-[0_20px_50px_rgba(0,0,0,0.3)] border-[12px] border-pink-100 text-center animate-in zoom-in duration-500 w-full max-w-sm relative">
+             <div className="absolute -top-16 left-1/2 -translate-x-1/2 text-8xl drop-shadow-lg animate-bounce">
+                {result === 'win' ? '👑' : '👻'}
              </div>
              
-             {isPractice ? (
-               <div className="flex flex-col gap-3">
-                 <button onClick={resetPracticeGame} className="w-full bg-green-500 text-white font-bold py-3 sm:py-4 rounded-2xl shadow-[0_6px_0_#2e7d32] text-xl active:translate-y-1 active:shadow-none transition-all">다시하기 🔄</button>
-                 <button onClick={() => onFinish(floor, false)} className="w-full bg-gray-400 text-white font-bold py-2 sm:py-3 rounded-2xl shadow-[0_6px_0_#666] text-lg active:translate-y-1 active:shadow-none transition-all">나가기 🏠</button>
-               </div>
-             ) : (
+             <h2 className={`text-6xl ${result === 'win' ? 'text-yellow-500' : 'text-gray-500'} mb-4 tracking-tighter`}>
+               {result === 'win' ? '위너! 대단해!' : '아고고! 패배...'}
+             </h2>
+             
+             <div className={`p-6 rounded-3xl mb-8 ${result === 'win' ? 'bg-yellow-50 border-4 border-yellow-200' : 'bg-gray-50 border-4 border-gray-200'}`}>
+                <p className="text-gray-400 text-sm font-bold uppercase mb-1">최종 기록</p>
+                <p className={`text-6xl font-black ${result === 'win' ? 'text-yellow-600' : 'text-gray-600'}`}>{floor}층</p>
+             </div>
+             
+             <div className="flex flex-col gap-4">
+               {isPractice ? (
+                 <button onClick={resetPracticeGame} className="w-full bg-green-500 text-white font-bold py-5 rounded-[24px] shadow-[0_8px_0_#2e7d32] text-2xl active:translate-y-1 active:shadow-none transition-all">한 번 더 도전! 🔄</button>
+               ) : (
+                 <div className="bg-sky-50 p-4 rounded-2xl mb-2 text-sky-600 font-bold">
+                   승률이 계산되고 있습니다! 📈
+                 </div>
+               )}
                <button 
                   onClick={() => onFinish(floor, result === 'win')} 
-                  className="w-full bg-pink-500 hover:bg-pink-600 text-white font-bold py-3 sm:py-4 rounded-2xl shadow-[0_6px_0_#d63384] border-2 border-white/20 text-xl active:translate-y-1 active:shadow-none transition-all"
+                  className="w-full bg-pink-500 hover:bg-pink-600 text-white font-bold py-5 rounded-[24px] shadow-[0_8px_0_#d63384] text-2xl active:translate-y-1 active:shadow-none transition-all"
                >
-                  로비로 돌아가기 🏠
+                  로비로 나가기 🏠
                </button>
-             )}
+             </div>
            </div>
         </div>
       )}
@@ -344,7 +348,8 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
             );
           })}
 
-          {!isPractice && (Object.entries(opponentFloors) as [string, OpponentData][]).map(([id, data]) => {
+          {!isPractice && /* FIX: Explicitly type entries to [string, OpponentData] to resolve 'unknown' property errors */
+          Object.entries(opponentFloors).map(([id, data]: [string, OpponentData]) => {
             const x = getStairX(data.floor);
             return (
               <div 
@@ -352,8 +357,8 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
                 className="absolute z-20 transition-all duration-300"
                 style={{ bottom: `${data.floor * 40 + 40}px`, left: `${x}px`, transform: `translateX(-50%)` }}
               >
-                <CharacterSprite type={data.charId} facing={data.facing} isMoving={false} size={60} opacity={0.5} customImageUrl={data.customImageUrl} />
-                <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-black/50 text-white text-[8px] sm:text-[10px] px-2 py-0.5 rounded-full backdrop-blur-sm whitespace-nowrap">{data.name}</div>
+                <CharacterSprite type={data.charId} facing={data.facing} isMoving={false} size={60} opacity={0.6} customImageUrl={data.customImageUrl} />
+                <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-black/50 text-white text-[10px] px-2 py-0.5 rounded-full backdrop-blur-sm whitespace-nowrap">{data.name}</div>
               </div>
             );
           })}
@@ -367,15 +372,21 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
         </div>
       </div>
 
-      <div className="w-full bg-white/95 backdrop-blur-md p-4 sm:p-8 border-t-8 border-gray-100 z-40">
-        <div className="max-w-md mx-auto flex justify-between gap-4 sm:gap-6 h-28 sm:h-36">
-          <button onPointerDown={(e) => { e.preventDefault(); handleStep('turn'); }} className="flex-1 bg-[#ff5e57] hover:bg-[#ff3f34] shadow-[0_10px_0_#d63031] active:scale-95 transition-all text-white rounded-[24px] sm:rounded-[32px] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/30 group">
-            <span className="text-4xl sm:text-5xl mb-1 group-active:rotate-180 transition-transform duration-300">🔄</span>
-            <span className="font-bold text-base sm:text-xl uppercase tracking-tighter">TURN</span>
+      <div className="w-full bg-white/95 backdrop-blur-md p-4 pb-8 sm:p-8 border-t-8 border-gray-100 z-40">
+        <div className="max-w-md mx-auto flex justify-between gap-4 h-28 sm:h-32">
+          <button 
+            onPointerDown={(e) => { e.preventDefault(); handleStep('turn'); }} 
+            className="flex-1 bg-[#ff5e57] shadow-[0_10px_0_#d63031] active:scale-95 transition-all text-white rounded-[32px] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/30 group"
+          >
+            <span className="text-4xl mb-1 group-active:rotate-180 transition-transform duration-300">🔄</span>
+            <span className="font-bold text-lg uppercase tracking-tighter">방향 전환</span>
           </button>
-          <button onPointerDown={(e) => { e.preventDefault(); handleStep('up'); }} className="flex-1 bg-[#3fb6ff] hover:bg-[#0984e3] shadow-[0_10px_0_#0652dd] active:scale-95 transition-all text-white rounded-[24px] sm:rounded-[32px] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/30 group">
-            <span className="text-4xl sm:text-5xl mb-1 group-active:scale-125 transition-transform duration-150">👣</span>
-            <span className="font-bold text-base sm:text-xl uppercase tracking-tighter">CLIMB</span>
+          <button 
+            onPointerDown={(e) => { e.preventDefault(); handleStep('up'); }} 
+            className="flex-1 bg-[#3fb6ff] shadow-[0_10px_0_#0652dd] active:scale-95 transition-all text-white rounded-[32px] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/30 group"
+          >
+            <span className="text-4xl mb-1 group-active:scale-125 transition-transform duration-150">👣</span>
+            <span className="font-bold text-lg uppercase tracking-tighter">계단 오르기</span>
           </button>
         </div>
       </div>
