@@ -42,6 +42,16 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
   const facingRef = useRef(1);
   const movingTimeoutRef = useRef<any>(null);
 
+  // 고도에 따른 동적 배경색 결정 함수
+  const getBackgroundClass = () => {
+    if (floor < 60) return isPractice ? 'bg-[#7cfc00]' : 'bg-[#a0e9ff]';
+    if (floor < 120) return 'bg-[#2ecc71]'; // 숲 테마
+    if (floor < 200) return 'bg-[#f39c12]'; // 노을 테마
+    if (floor < 350) return 'bg-[#34495e]'; // 밤하늘 테마
+    if (floor < 500) return 'bg-[#1a1a2e]'; // 우주 테마
+    return 'bg-[#4834d4]'; // 은하 테마
+  };
+
   const generateStairs = useCallback(() => {
     if (!isPractice && stairSequence) {
       setStairs(stairSequence);
@@ -245,7 +255,10 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
   const currentPlayerX = getStairX(floor);
 
   return (
-    <div className={`fixed inset-0 overflow-hidden ${isPractice ? 'bg-[#7cfc00]' : 'bg-[#a0e9ff]'} flex flex-col items-center font-['Jua'] select-none`}>
+    <div className={`fixed inset-0 overflow-hidden transition-colors duration-1000 ease-in-out ${getBackgroundClass()} flex flex-col items-center font-['Jua'] select-none`}>
+      {/* 배경 장식용 그라데이션 오버레이 */}
+      <div className="absolute inset-0 bg-gradient-to-b from-black/10 to-transparent pointer-events-none" />
+
       <div className="absolute top-16 left-1/2 -translate-x-1/2 w-[80%] max-w-md h-6 bg-white/30 rounded-full border-4 border-white shadow-lg z-50 overflow-hidden backdrop-blur-sm">
         <div 
           className={`h-full transition-all duration-100 ease-linear ${timeLeft < 5 ? 'bg-red-500' : isPractice ? 'bg-green-400' : 'bg-yellow-400'}`}
