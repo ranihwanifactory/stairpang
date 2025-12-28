@@ -21,7 +21,13 @@ const App: React.FC = () => {
   const [view, setView] = useState<'lobby' | 'ranking' | 'room'>('lobby');
   const [isProcessing, setIsProcessing] = useState(false);
   const [inputCode, setInputCode] = useState('');
+  
+  // 카메라 관련 상태
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [showPhotoOptions, setShowPhotoOptions] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (u) => {
@@ -110,29 +116,95 @@ const App: React.FC = () => {
     }
   }, [currentRoomId]);
 
-  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !user || !profile) return;
-
+  // 이미지 압축 및 저장 헬퍼
+  const processAndSaveImage = async (imageSrc: string) => {
+    if (!user || !profile) return;
     setIsProcessing(true);
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const base64 = event.target?.result as string;
-      await updateDoc(doc(db, 'users', user.uid), {
-        customCharacterURL: base64,
-        selectedCharacter: 'custom'
-      });
-      setProfile({ ...profile, customCharacterURL: base64, selectedCharacter: 'custom' });
-      
-      if (currentRoomId) {
-        await update(ref(rtdb, `rooms/${currentRoomId}/players/${user.uid}`), {
-          characterId: 'custom',
-          customCharacterURL: base64
+    
+    const img = new Image();
+    img.onload = async () => {
+      const canvas = document.createElement('canvas');
+      const size = 128; // 고정된 작은 크기로 리사이징 (성능 최적화)
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        // 중앙 크롭 및 그리기
+        const minSide = Math.min(img.width, img.height);
+        const startX = (img.width - minSide) / 2;
+        const startY = (img.height - minSide) / 2;
+        ctx.drawImage(img, startX, startY, minSide, minSide, 0, 0, size, size);
+        
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7); // 압축된 JPEG
+        
+        await updateDoc(doc(db, 'users', user.uid), {
+          customCharacterURL: compressedBase64,
+          selectedCharacter: 'custom'
         });
+        setProfile({ ...profile, customCharacterURL: compressedBase64, selectedCharacter: 'custom' });
+        
+        if (currentRoomId) {
+          await update(ref(rtdb, `rooms/${currentRoomId}/players/${user.uid}`), {
+            characterId: 'custom',
+            customCharacterURL: compressedBase64
+          });
+        }
       }
       setIsProcessing(false);
+      setShowPhotoOptions(false);
+    };
+    img.src = imageSrc;
+  };
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) processAndSaveImage(event.target.result as string);
     };
     reader.readAsDataURL(file);
+  };
+
+  const openCamera = async () => {
+    setIsCameraOpen(true);
+    setShowPhotoOptions(false);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (err) {
+      alert('카메라를 켤 수 없어요! 권한을 확인해주세요.');
+      setIsCameraOpen(false);
+    }
+  };
+
+  const closeCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+      tracks.forEach(track => track.stop());
+    }
+    setIsCameraOpen(false);
+  };
+
+  const capturePhoto = () => {
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const size = Math.min(video.videoWidth, video.videoHeight);
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const startX = (video.videoWidth - size) / 2;
+        const startY = (video.videoHeight - size) / 2;
+        ctx.drawImage(video, startX, startY, size, size, 0, 0, size, size);
+        const dataUrl = canvas.toDataURL('image/jpeg');
+        processAndSaveImage(dataUrl);
+        closeCamera();
+      }
+    }
   };
 
   const createRoom = async () => {
@@ -241,8 +313,6 @@ const App: React.FC = () => {
         alert('최소 2명이 필요해요! 친구를 초대하세요.');
         return;
       }
-
-      // 방장이 모든 플레이어가 공유할 동일한 계단 배열 생성
       const startDir = 1;
       const sequence = [startDir, startDir];
       let currentX = startDir;
@@ -253,7 +323,6 @@ const App: React.FC = () => {
         }
         sequence.push(currentX);
       }
-
       await update(ref(rtdb, `rooms/${currentRoomId}`), { 
         status: 'playing',
         stairSequence: sequence
@@ -263,7 +332,7 @@ const App: React.FC = () => {
 
   const selectCharacter = async (charId: string) => {
     if (charId === 'custom') {
-      fileInputRef.current?.click();
+      setShowPhotoOptions(true);
       return;
     }
     const currentUser = auth.currentUser;
@@ -312,7 +381,7 @@ const App: React.FC = () => {
         await update(ref(rtdb, `rooms/${currentRoomId}`), { 
           status: 'waiting',
           players: resetPlayers,
-          stairSequence: null // 다음 게임을 위해 계단 초기화
+          stairSequence: null
         });
       }, 3000);
     }
@@ -348,6 +417,8 @@ const App: React.FC = () => {
           <>
             <section className="bg-white p-4 sm:p-6 rounded-3xl shadow-xl border-b-8 border-pink-100 text-center relative overflow-hidden">
               <input type="file" ref={fileInputRef} onChange={handlePhotoUpload} accept="image/*" className="hidden" />
+              <canvas ref={canvasRef} className="hidden" />
+              
               <h2 className="text-lg sm:text-xl font-bold text-gray-800 mb-3">내 캐릭터 바꾸기</h2>
               <div className="grid grid-cols-5 gap-2 sm:gap-3 overflow-x-auto pb-2">
                 {CHARACTERS.map(char => (
@@ -365,15 +436,53 @@ const App: React.FC = () => {
                   </button>
                 ))}
               </div>
-              {isProcessing && <div className="absolute inset-0 bg-white/60 backdrop-blur-sm flex items-center justify-center font-bold text-pink-500">사진 처리 중... 📸</div>}
+              
+              {showPhotoOptions && (
+                <div className="absolute inset-0 bg-white/95 backdrop-blur-md flex flex-col items-center justify-center p-4 z-40 animate-in fade-in zoom-in duration-200">
+                  <h3 className="text-xl font-bold text-pink-500 mb-6">어떻게 사진을 가져올까요?</h3>
+                  <div className="grid grid-cols-2 gap-4 w-full max-w-[280px]">
+                    <button onClick={openCamera} className="bg-sky-400 hover:bg-sky-500 text-white p-4 rounded-3xl shadow-lg flex flex-col items-center gap-2">
+                       <span className="text-4xl">📸</span>
+                       <span className="font-bold">사진 찍기</span>
+                    </button>
+                    <button onClick={() => fileInputRef.current?.click()} className="bg-pink-400 hover:bg-pink-500 text-white p-4 rounded-3xl shadow-lg flex flex-col items-center gap-2">
+                       <span className="text-4xl">🖼️</span>
+                       <span className="font-bold">앨범에서 선택</span>
+                    </button>
+                  </div>
+                  <button onClick={() => setShowPhotoOptions(false)} className="mt-8 text-gray-400 font-bold">나중에 할게요</button>
+                </div>
+              )}
+
+              {isCameraOpen && (
+                <div className="fixed inset-0 bg-black z-[100] flex flex-col items-center justify-center">
+                  <div className="relative w-full aspect-square max-w-sm overflow-hidden border-4 border-white rounded-[40px] shadow-2xl">
+                    <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover transform scale-x-[-1]" />
+                    {/* 가이드 라인 */}
+                    <div className="absolute inset-0 border-[40px] border-black/40 pointer-events-none flex items-center justify-center">
+                       <div className="w-64 h-64 border-4 border-dashed border-white/60 rounded-full"></div>
+                    </div>
+                  </div>
+                  <div className="mt-12 flex gap-8 items-center">
+                    <button onClick={closeCamera} className="w-16 h-16 rounded-full bg-white/20 text-white text-3xl flex items-center justify-center">✕</button>
+                    <button onClick={capturePhoto} className="w-24 h-24 rounded-full bg-pink-500 border-8 border-white shadow-xl flex items-center justify-center active:scale-90 transition-transform">
+                       <div className="w-12 h-12 bg-white rounded-full"></div>
+                    </button>
+                    <div className="w-16 h-16 invisible"></div>
+                  </div>
+                  <p className="text-white/60 mt-6 font-bold">얼굴을 동그라미에 맞춰주세요!</p>
+                </div>
+              )}
+
+              {isProcessing && <div className="absolute inset-0 bg-white/60 backdrop-blur-sm flex items-center justify-center font-bold text-pink-500 z-50">사진 처리 중... 📸</div>}
             </section>
 
             <div className="grid grid-cols-2 gap-3 sm:gap-4">
-              <button disabled={isProcessing} onClick={createRoom} className="bg-pink-500 hover:bg-pink-600 text-white text-lg sm:text-xl font-bold py-4 sm:py-6 rounded-3xl shadow-lg border-b-4 border-pink-700 flex flex-col items-center justify-center gap-1 sm:gap-2">
+              <button disabled={isProcessing} onClick={createRoom} className="bg-pink-500 hover:bg-pink-600 text-white text-lg sm:text-xl font-bold py-4 sm:py-6 rounded-3xl shadow-lg border-b-4 border-pink-700 flex flex-col items-center justify-center gap-1 sm:gap-2 active:translate-y-1 active:border-b-0 transition-all">
                 <span className="text-2xl sm:text-3xl">🎮</span>
                 <span>방 만들기</span>
               </button>
-              <button onClick={startPractice} className="bg-green-500 hover:bg-green-600 text-white text-lg sm:text-xl font-bold py-4 sm:py-6 rounded-3xl shadow-lg border-b-4 border-green-700 flex flex-col items-center justify-center gap-1 sm:gap-2">
+              <button onClick={startPractice} className="bg-green-500 hover:bg-green-600 text-white text-lg sm:text-xl font-bold py-4 sm:py-6 rounded-3xl shadow-lg border-b-4 border-green-700 flex flex-col items-center justify-center gap-1 sm:gap-2 active:translate-y-1 active:border-b-0 transition-all">
                 <span className="text-2xl sm:text-3xl">🌱</span>
                 <span>혼자 연습</span>
               </button>
@@ -415,7 +524,7 @@ const App: React.FC = () => {
                           <span className="bg-white px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] text-sky-400 font-bold border border-sky-100">인원: {Object.keys(r.players).length}/4</span>
                         </div>
                       </div>
-                      <button onClick={() => joinRoom(r.id)} className="bg-sky-500 text-white px-3 sm:px-6 py-1.5 sm:py-2 rounded-xl font-bold text-xs sm:text-sm shadow-md flex-shrink-0">입장!</button>
+                      <button onClick={() => joinRoom(r.id)} className="bg-sky-500 text-white px-3 sm:px-6 py-1.5 sm:py-2 rounded-xl font-bold text-xs sm:text-sm shadow-md flex-shrink-0 hover:bg-sky-600">입장!</button>
                     </div>
                   ))
                 )}
@@ -453,7 +562,7 @@ const App: React.FC = () => {
 
               <div className="space-y-3 sm:space-y-4">
                 {room.hostId === auth.currentUser?.uid ? (
-                  <button onClick={startGame} disabled={Object.keys(room.players).length < 2} className={`w-full py-4 sm:py-5 rounded-2xl text-white font-bold text-xl sm:text-2xl shadow-lg border-b-4 ${Object.keys(room.players).length < 2 ? 'bg-gray-300 border-gray-400 opacity-70' : 'bg-pink-500 border-pink-700'}`}>
+                  <button onClick={startGame} disabled={Object.keys(room.players).length < 2} className={`w-full py-4 sm:py-5 rounded-2xl text-white font-bold text-xl sm:text-2xl shadow-lg border-b-4 ${Object.keys(room.players).length < 2 ? 'bg-gray-300 border-gray-400 opacity-70' : 'bg-pink-500 border-pink-700 hover:bg-pink-600'}`}>
                     {Object.keys(room.players).length < 2 ? '친구를 더 기다려요' : '게임 시작! 🎉'}
                   </button>
                 ) : (
@@ -489,12 +598,12 @@ const App: React.FC = () => {
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-pink-50 h-16 sm:h-20 flex items-center justify-around z-50">
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-pink-50 h-16 sm:h-20 flex items-center justify-around z-50 shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
         <button onClick={() => setView('lobby')} className={`flex flex-col items-center gap-0.5 sm:gap-1 flex-1 ${view === 'lobby' ? 'text-pink-500' : 'text-gray-300'}`}>
-          <span className="text-2xl sm:text-3xl">🏠</span><span className="text-[10px] sm:text-xs font-bold">홈</span>
+          <span className="text-2xl sm:text-3xl transition-transform hover:scale-110 active:scale-95">🏠</span><span className="text-[10px] sm:text-xs font-bold">홈</span>
         </button>
         <button onClick={() => setView('ranking')} className={`flex flex-col items-center gap-0.5 sm:gap-1 flex-1 ${view === 'ranking' ? 'text-pink-500' : 'text-gray-300'}`}>
-          <span className="text-2xl sm:text-3xl">🏆</span><span className="text-[10px] sm:text-xs font-bold">랭킹</span>
+          <span className="text-2xl sm:text-3xl transition-transform hover:scale-110 active:scale-95">🏆</span><span className="text-[10px] sm:text-xs font-bold">랭킹</span>
         </button>
       </nav>
     </div>
