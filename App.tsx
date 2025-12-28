@@ -28,14 +28,13 @@ const App: React.FC = () => {
         const docSnap = await getDoc(doc(db, 'users', u.uid));
         if (docSnap.exists()) {
           const data = docSnap.data() as UserProfile;
-          setProfile({ ...data, uid: u.uid }); // Ensure uid is present
+          setProfile({ ...data, uid: u.uid });
         } else {
-          // If profile doesn't exist yet, create a temporary one to avoid crashes
           setProfile({
             uid: u.uid,
             displayName: u.displayName || '익명 친구',
             email: u.email || '',
-            photoURL: u.photoURL || '',
+            photoURL: u.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.uid}`,
             winCount: 0,
             totalGames: 0,
             selectedCharacter: 'rabbit'
@@ -57,9 +56,9 @@ const App: React.FC = () => {
     onValue(roomsRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        const waitingRooms = Object.values(data)
-          .filter((r: any) => r && r.status === 'waiting')
-          .map((r: any) => r as Room);
+        const waitingRooms = Object.entries(data)
+          .filter(([_, r]: [string, any]) => r && r.status === 'waiting')
+          .map(([id, r]: [string, any]) => ({ ...r, id }) as Room);
         setAvailableRooms(waitingRooms);
       } else {
         setAvailableRooms([]);
@@ -116,24 +115,35 @@ const App: React.FC = () => {
   }, [currentRoomId]);
 
   const createRoom = async () => {
-    if (!user || !profile || isProcessing) return;
+    // CRITICAL: Ensure we have the most up-to-date user reference from auth
+    const currentUser = auth.currentUser;
+    if (!currentUser || !profile || isProcessing) {
+      alert("잠시만 기다려주세요. 프로필 정보를 불러오는 중입니다.");
+      return;
+    }
+
     setIsProcessing(true);
     try {
+      const myUid = currentUser.uid;
       const newRoomRef = push(ref(rtdb, 'rooms'));
-      const roomId = newRoomRef.key!;
-      const myUid = user.uid; // Use auth uid directly to avoid undefined
-      
+      const roomId = newRoomRef.key;
+
+      if (!roomId || !myUid) {
+        throw new Error("필수 정보(ID)가 누락되었습니다.");
+      }
+
+      // Explicitly define every field to ensure NO 'undefined' reaches Firebase
       const roomData = {
         id: roomId,
         hostId: myUid,
-        hostName: profile.displayName || '익명',
+        hostName: profile.displayName || currentUser.displayName || '익명',
         status: 'waiting',
         createdAt: Date.now(),
         players: {
           [myUid]: {
             uid: myUid,
-            displayName: profile.displayName || '익명',
-            photoURL: profile.photoURL || '',
+            displayName: profile.displayName || currentUser.displayName || '익명',
+            photoURL: profile.photoURL || currentUser.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${myUid}`,
             character: CHARACTERS.find(c => c.id === profile.selectedCharacter)?.emoji || '🐰',
             currentFloor: 0,
             isReady: false,
@@ -141,25 +151,27 @@ const App: React.FC = () => {
           }
         }
       };
+
       await set(newRoomRef, roomData);
       window.location.hash = roomId;
     } catch (e: any) {
       console.error('Room Creation Error:', e);
-      alert('방을 만들지 못했어요: ' + e.message);
+      alert('방을 만들지 못했어요: ' + (e.message || '네트워크 오류'));
     } finally {
       setIsProcessing(false);
     }
   };
 
   const joinRoom = async (roomId: string) => {
-    if (!user || !profile || isProcessing) return;
+    const currentUser = auth.currentUser;
+    if (!currentUser || !profile || isProcessing) return;
     setIsProcessing(true);
     try {
-      const myUid = user.uid;
+      const myUid = currentUser.uid;
       const player: PlayerState = {
         uid: myUid,
-        displayName: profile.displayName || '익명',
-        photoURL: profile.photoURL || '',
+        displayName: profile.displayName || currentUser.displayName || '익명',
+        photoURL: profile.photoURL || currentUser.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${myUid}`,
         character: CHARACTERS.find(c => c.id === profile.selectedCharacter)?.emoji || '🐰',
         currentFloor: 0,
         isReady: false,
@@ -178,10 +190,11 @@ const App: React.FC = () => {
   };
 
   const leaveRoom = async () => {
-    if (!currentRoomId || !user || isProcessing) return;
+    const currentUser = auth.currentUser;
+    if (!currentRoomId || !currentUser || isProcessing) return;
     setIsProcessing(true);
     try {
-      const myUid = user.uid;
+      const myUid = currentUser.uid;
       const roomPlayers = room?.players || {};
       if (Object.keys(roomPlayers).length <= 1) {
         await remove(ref(rtdb, `rooms/${currentRoomId}`));
@@ -200,7 +213,7 @@ const App: React.FC = () => {
     if (currentRoomId && room) {
       const playerCount = Object.keys(room.players).length;
       if (playerCount < 2) {
-        alert('혼자서는 대결할 수 없어요! 친구를 초대해주세요. 🤜🤛');
+        alert('혼자서는 대결할 수 없어요! 친구를 최소 한 명 초대해주세요. 🤜🤛');
         return;
       }
       await update(ref(rtdb, `rooms/${currentRoomId}`), { status: 'playing' });
@@ -208,29 +221,32 @@ const App: React.FC = () => {
   };
 
   const selectCharacter = async (charId: string) => {
-    if (!profile || !user) return;
+    const currentUser = auth.currentUser;
+    if (!profile || !currentUser) return;
+    
     const newProfile = { ...profile, selectedCharacter: charId };
     setProfile(newProfile);
-    await updateDoc(doc(db, 'users', user.uid), { selectedCharacter: charId });
+    await updateDoc(doc(db, 'users', currentUser.uid), { selectedCharacter: charId });
     
     if (currentRoomId) {
       const emoji = CHARACTERS.find(c => c.id === charId)?.emoji || '🐰';
-      await update(ref(rtdb, `rooms/${currentRoomId}/players/${user.uid}`), { character: emoji });
+      await update(ref(rtdb, `rooms/${currentRoomId}/players/${currentUser.uid}`), { character: emoji });
     }
   };
 
   const handleGameFinish = async (score: number) => {
-    if (!user || !profile || !room || !currentRoomId) return;
+    const currentUser = auth.currentUser;
+    if (!currentUser || !profile || !room || !currentRoomId) return;
     
     setInGame(false);
     playSound('win');
     
-    await updateDoc(doc(db, 'users', user.uid), {
-      totalGames: profile.totalGames + 1,
-      winCount: score > 30 ? profile.winCount + 1 : profile.winCount
+    await updateDoc(doc(db, 'users', currentUser.uid), {
+      totalGames: (profile.totalGames || 0) + 1,
+      winCount: score > 30 ? (profile.winCount || 0) + 1 : (profile.winCount || 0)
     });
     
-    if (room.hostId === user.uid) {
+    if (room.hostId === currentUser.uid) {
       setTimeout(async () => {
         const resetPlayers: Record<string, any> = {};
         Object.keys(room.players).forEach(pid => {
@@ -258,7 +274,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-pink-50 pb-24 font-['Jua']">
-      {/* Header */}
       <header className="bg-white p-4 shadow-sm flex items-center justify-between border-b-2 border-pink-100 sticky top-0 z-30">
         <div className="flex items-center gap-3">
           <img src={profile?.photoURL} className="w-10 h-10 rounded-full border-2 border-pink-200 shadow-sm bg-pink-50" alt="me" />
@@ -278,7 +293,6 @@ const App: React.FC = () => {
       <main className="max-w-md mx-auto p-4 space-y-6">
         {view === 'lobby' && (
           <>
-            {/* Character Selection */}
             <section className="bg-white p-6 rounded-3xl shadow-xl border-b-8 border-pink-100 text-center transform hover:scale-[1.02] transition-transform">
               <h2 className="text-xl font-bold text-gray-800 mb-4">내 캐릭터 바꾸기</h2>
               <div className="grid grid-cols-4 gap-3">
@@ -294,7 +308,6 @@ const App: React.FC = () => {
               </div>
             </section>
 
-            {/* Create Room Button */}
             <button 
               disabled={isProcessing}
               onClick={createRoom}
@@ -304,7 +317,6 @@ const App: React.FC = () => {
               <span>방 만들기</span>
             </button>
 
-            {/* Room List */}
             <section className="bg-white p-6 rounded-3xl shadow-lg border-2 border-sky-100">
               <h3 className="font-bold text-lg mb-4 text-sky-600 flex items-center gap-2">
                 <span className="animate-bounce">☁️</span> 대기 중인 친구들
@@ -319,7 +331,7 @@ const App: React.FC = () => {
                     <div key={r.id} className="flex items-center justify-between p-5 rounded-2xl bg-sky-50 border border-sky-100 hover:border-sky-300 transition-all group">
                       <div className="flex flex-col">
                         <span className="font-bold text-gray-700 text-lg">{r.hostName}님의 방</span>
-                        <span className="text-xs text-sky-400 font-bold">참여 인원: {Object.keys(r.players).length} / 4</span>
+                        <span className="text-xs text-sky-400 font-bold">참여 인원: {Object.keys(r.players || {}).length} / 4</span>
                       </div>
                       <button 
                         disabled={isProcessing}
@@ -344,7 +356,7 @@ const App: React.FC = () => {
               <p className="text-gray-400 text-sm mb-8 font-bold">친구들이 2명 이상 모여야 시작해요! 👫</p>
               
               <div className="grid grid-cols-2 gap-6 mb-10">
-                {(Object.values(room.players) as PlayerState[]).map(p => (
+                {(Object.values(room.players || {}) as PlayerState[]).map(p => (
                   <div key={p.uid} className="flex flex-col items-center gap-2 p-4 bg-gray-50 rounded-2xl border-2 border-transparent hover:border-sky-100 transition-all">
                     <div className="relative">
                       <img src={p.photoURL} className="w-20 h-20 rounded-full border-4 border-white shadow-md bg-white" alt="" />
@@ -354,7 +366,7 @@ const App: React.FC = () => {
                     <span className="text-[10px] text-sky-400 font-bold uppercase tracking-wider">Ready</span>
                   </div>
                 ))}
-                {Array.from({ length: Math.max(0, 4 - Object.keys(room.players).length) }).map((_, i) => (
+                {Array.from({ length: Math.max(0, 4 - Object.keys(room.players || {}).length) }).map((_, i) => (
                   <div key={i} className="flex flex-col items-center gap-2 p-4 border-2 border-dashed border-gray-100 rounded-2xl opacity-40">
                     <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
                        <span className="text-4xl text-gray-300">?</span>
@@ -376,20 +388,20 @@ const App: React.FC = () => {
                   <span>🔗</span> 초대 링크 복사하기
                 </button>
 
-                {room.hostId === user?.uid ? (
+                {room.hostId === auth.currentUser?.uid ? (
                   <div className="space-y-2">
                     <button 
                       onClick={startGame}
-                      disabled={Object.keys(room.players).length < 2}
+                      disabled={Object.keys(room.players || {}).length < 2}
                       className={`w-full py-5 rounded-2xl text-white font-bold text-2xl shadow-lg border-b-4 transition-all ${
-                        Object.keys(room.players).length < 2 
+                        Object.keys(room.players || {}).length < 2 
                         ? 'bg-gray-300 border-gray-400 cursor-not-allowed opacity-70' 
                         : 'bg-pink-500 border-pink-700 hover:bg-pink-600 active:translate-y-1 active:border-b-0'
                       }`}
                     >
-                      {Object.keys(room.players).length < 2 ? '친구를 기다려요' : '시작하기! 🎉'}
+                      {Object.keys(room.players || {}).length < 2 ? '친구를 기다려요' : '시작하기! 🎉'}
                     </button>
-                    {Object.keys(room.players).length < 2 && (
+                    {Object.keys(room.players || {}).length < 2 && (
                       <p className="text-pink-400 text-xs font-bold animate-bounce">최소 2명이 모여야 시작할 수 있어요!</p>
                     )}
                   </div>
@@ -441,7 +453,6 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-pink-50 h-20 flex items-center justify-around z-50 shadow-[0_-8px_20px_rgba(0,0,0,0.05)] px-6">
         <button 
           onClick={() => setView('lobby')}
