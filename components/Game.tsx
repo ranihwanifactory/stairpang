@@ -6,9 +6,9 @@ import { ref, update, onValue, off } from 'firebase/database';
 import { CharacterSprite } from './CharacterSprite';
 
 interface GameProps {
-  roomId: string;
+  roomId: string | 'practice'; // 'practice'일 경우 연습 모드
   uid: string;
-  characterId: string; // ID를 전달받아 Sprite 렌더링
+  characterId: string;
   onFinish: (score: number) => void;
 }
 
@@ -20,6 +20,7 @@ interface OpponentData {
 }
 
 export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }) => {
+  const isPractice = roomId === 'practice';
   const [floor, setFloor] = useState(0);
   const [facing, setFacing] = useState(1); // 0: Left, 1: Right
   const [stairs, setStairs] = useState<number[]>([]); // 0: Left, 1: Right
@@ -52,24 +53,27 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
   useEffect(() => {
     generateStairs();
 
-    const roomRef = ref(rtdb, `rooms/${roomId}/players`);
-    const listener = onValue(roomRef, (snapshot) => {
-      const players = snapshot.val();
-      const opps: Record<string, OpponentData> = {};
-      if (players) {
-        Object.keys(players).forEach(pId => {
-          if (pId !== uid) {
-            opps[pId] = {
-              floor: players[pId].currentFloor || 0,
-              charId: players[pId].characterId || 'rabbit',
-              name: players[pId].displayName || '친구',
-              facing: players[pId].facing || 1
-            };
-          }
-        });
-      }
-      setOpponentFloors(opps);
-    });
+    let listener: any = null;
+    if (!isPractice) {
+      const roomRef = ref(rtdb, `rooms/${roomId}/players`);
+      listener = onValue(roomRef, (snapshot) => {
+        const players = snapshot.val();
+        const opps: Record<string, OpponentData> = {};
+        if (players) {
+          Object.keys(players).forEach(pId => {
+            if (pId !== uid) {
+              opps[pId] = {
+                floor: players[pId].currentFloor || 0,
+                charId: players[pId].characterId || 'rabbit',
+                name: players[pId].displayName || '친구',
+                facing: players[pId].facing || 1
+              };
+            }
+          });
+        }
+        setOpponentFloors(opps);
+      });
+    }
 
     const cdInterval = window.setInterval(() => {
       setCountdown(prev => {
@@ -84,11 +88,14 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
     }, 1000);
 
     return () => {
-      off(roomRef, 'value', listener);
+      if (!isPractice && listener) {
+        const roomRef = ref(rtdb, `rooms/${roomId}/players`);
+        off(roomRef, 'value', listener);
+      }
       clearInterval(cdInterval);
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [roomId, uid, generateStairs]);
+  }, [roomId, uid, generateStairs, isPractice]);
 
   useEffect(() => {
     if (gameActive && !isDead) {
@@ -134,9 +141,9 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
       if (movingTimeoutRef.current) clearTimeout(movingTimeoutRef.current);
       movingTimeoutRef.current = window.setTimeout(() => setIsMoving(false), 150);
 
-      setTimeLeft(prev => Math.min(30, prev + 0.2));
+      setTimeLeft(prev => Math.min(30, prev + (isPractice ? 0.3 : 0.2))); // 연습 모드는 조금 더 여유롭게
 
-      if (nextFloor - lastSyncFloor.current >= 2) {
+      if (!isPractice && nextFloor - lastSyncFloor.current >= 2) {
         lastSyncFloor.current = nextFloor;
         update(ref(rtdb, `rooms/${roomId}/players/${uid}`), {
           currentFloor: nextFloor,
@@ -146,7 +153,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
     } else {
       gameOver();
     }
-  }, [gameActive, isDead, stairs, roomId, uid, gameOver]);
+  }, [gameActive, isDead, stairs, roomId, uid, gameOver, isPractice]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -169,10 +176,10 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
   const currentPlayerX = getStairX(floor);
 
   return (
-    <div className="fixed inset-0 overflow-hidden bg-[#87CEEB] flex flex-col items-center font-['Jua'] select-none">
+    <div className={`fixed inset-0 overflow-hidden ${isPractice ? 'bg-[#98FB98]' : 'bg-[#87CEEB]'} flex flex-col items-center font-['Jua'] select-none`}>
       {/* 배경 */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute bottom-0 w-full h-64 bg-gradient-to-t from-[#4a90e2] to-transparent opacity-30"></div>
+        <div className={`absolute bottom-0 w-full h-64 bg-gradient-to-t ${isPractice ? 'from-green-500' : 'from-[#4a90e2]'} to-transparent opacity-30`}></div>
         <div className="absolute top-20 left-10 text-8xl opacity-20 animate-pulse">☁️</div>
         <div className="absolute top-60 right-10 text-9xl opacity-10 animate-pulse delay-700">☁️</div>
       </div>
@@ -185,17 +192,17 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
           </div>
           <div className="w-48 h-6 bg-gray-200 rounded-full border-2 border-white overflow-hidden shadow-inner">
             <div 
-              className={`h-full transition-all duration-100 ${timeLeft < 5 ? 'bg-red-500' : 'bg-yellow-400'}`}
+              className={`h-full transition-all duration-100 ${timeLeft < 5 ? 'bg-red-500' : isPractice ? 'bg-green-400' : 'bg-yellow-400'}`}
               style={{ width: `${(timeLeft / 30) * 100}%` }}
             ></div>
           </div>
         </div>
         
         <div className="flex flex-col items-end gap-2">
-           <div className="bg-pink-500 text-white px-4 py-1 rounded-full text-sm font-bold shadow-md">
-             실시간 대결 중! 🏁
+           <div className={`${isPractice ? 'bg-green-600' : 'bg-pink-500'} text-white px-4 py-1 rounded-full text-sm font-bold shadow-md`}>
+             {isPractice ? '열심히 연습 중! 🌱' : '실시간 대결 중! 🏁'}
            </div>
-           {Object.entries(opponentFloors).map(([id, data]: [string, OpponentData]) => (
+           {!isPractice && Object.entries(opponentFloors).map(([id, data]: [string, OpponentData]) => (
              <div key={id} className="bg-white/80 px-3 py-1 rounded-lg text-xs font-bold border border-pink-200 flex items-center gap-2 animate-bounce">
                <span className="w-5 h-5 flex items-center justify-center">
                  <CharacterSprite type={data.charId} facing={1} isMoving={false} size={24} />
@@ -218,8 +225,8 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
         <div className="absolute inset-0 z-50 bg-red-500/20 backdrop-blur-md flex flex-col items-center justify-center">
            <div className="bg-white p-8 rounded-3xl shadow-2xl border-4 border-red-500 text-center animate-bounce">
              <h2 className="text-6xl text-red-500 mb-4">으악! 😵</h2>
-             <p className="text-2xl text-gray-700">발을 헛디뎠어요!</p>
-             <p className="text-4xl text-pink-500 mt-4 font-bold">{floor}층 도달!</p>
+             <p className="text-2xl text-gray-700">{isPractice ? '다시 도전해볼까요?' : '발을 헛디뎠어요!'}</p>
+             <p className={`text-4xl ${isPractice ? 'text-green-500' : 'text-pink-500'} mt-4 font-bold`}>{floor}층 도달!</p>
            </div>
         </div>
       )}
@@ -253,8 +260,8 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
             );
           })}
 
-          {/* 2. 경쟁자 레이어 */}
-          {Object.entries(opponentFloors).map(([id, data]: [string, OpponentData]) => {
+          {/* 2. 경쟁자 레이어 (연습 모드에선 숨김) */}
+          {!isPractice && Object.entries(opponentFloors).map(([id, data]: [string, OpponentData]) => {
             const x = getStairX(data.floor);
             return (
               <div 
@@ -293,7 +300,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
         <div className="max-w-md mx-auto flex justify-between gap-6 h-36">
           <button 
             onPointerDown={(e) => { e.preventDefault(); handleStep('up'); }}
-            className="flex-1 bg-[#4a90e2] hover:bg-[#357abd] active:scale-95 transition-all text-white rounded-3xl shadow-[0_10px_0_#2a5a8e] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/20 group"
+            className={`flex-1 ${isPractice ? 'bg-green-500 hover:bg-green-600 shadow-[0_10px_0_#2e7d32]' : 'bg-[#4a90e2] hover:bg-[#357abd] shadow-[0_10px_0_#2a5a8e]'} active:scale-95 transition-all text-white rounded-3xl active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/20 group`}
           >
             <span className="text-5xl mb-1 group-active:scale-125 transition-transform">👣</span>
             <span className="font-bold text-xl uppercase tracking-widest">CLIMB</span>
@@ -301,7 +308,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
           
           <button 
             onPointerDown={(e) => { e.preventDefault(); handleStep('turn'); }}
-            className="flex-1 bg-[#ff6b6b] hover:bg-[#ee5253] active:scale-95 transition-all text-white rounded-3xl shadow-[0_10px_0_#b33939] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/20 group"
+            className={`flex-1 ${isPractice ? 'bg-orange-400 hover:bg-orange-500 shadow-[0_10px_0_#c47b00]' : 'bg-[#ff6b6b] hover:bg-[#ee5253] shadow-[0_10px_0_#b33939]'} active:scale-95 transition-all text-white rounded-3xl active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/20 group`}
           >
             <span className="text-5xl mb-1 group-active:rotate-180 transition-transform">🔄</span>
             <span className="font-bold text-xl uppercase tracking-widest">TURN</span>
