@@ -2,7 +2,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { auth, db, rtdb } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-// Fix: Added missing setDoc to the imports from firebase/firestore
 import { doc, getDoc, setDoc, updateDoc, collection, query, orderBy, limit, onSnapshot, increment } from 'firebase/firestore';
 import { ref, set, push, onValue, remove, update, off, get } from 'firebase/database';
 import { Auth } from './components/Auth';
@@ -34,10 +33,21 @@ const App: React.FC = () => {
       setUser(u);
       if (u) {
         try {
-          const docSnap = await getDoc(doc(db, 'users', u.uid));
+          const docRef = doc(db, 'users', u.uid);
+          const docSnap = await getDoc(docRef);
+          
           if (docSnap.exists()) {
             const data = docSnap.data() as UserProfile;
-            setProfile({ ...data, uid: u.uid });
+            // null이나 undefined가 없도록 보장
+            setProfile({
+              ...data,
+              uid: u.uid,
+              displayName: data.displayName || u.displayName || '익명 친구',
+              photoURL: data.photoURL || u.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.uid}`,
+              winCount: data.winCount || 0,
+              totalGames: data.totalGames || 0,
+              selectedCharacter: data.selectedCharacter || 'rabbit'
+            });
           } else {
             const newProfile = {
               uid: u.uid,
@@ -48,7 +58,7 @@ const App: React.FC = () => {
               totalGames: 0,
               selectedCharacter: 'rabbit'
             };
-            await setDoc(doc(db, 'users', u.uid), newProfile);
+            await setDoc(docRef, newProfile);
             setProfile(newProfile);
           }
         } catch (e) {
@@ -115,7 +125,6 @@ const App: React.FC = () => {
           setInGame(data.status === 'playing');
           firstLoad = false;
         } else if (!firstLoad) {
-          // 데이터가 있다가 없어진 경우에만 퇴장 처리 (생성 직후 찰나의 null 방지)
           setRoom(null);
           setCurrentRoomId(null);
           window.location.hash = '';
@@ -209,6 +218,7 @@ const App: React.FC = () => {
 
   const createRoom = async () => {
     const currentUser = auth.currentUser;
+    // profile이 확실히 로드된 후 진행 (undefined 방지)
     if (!currentUser || !profile || isProcessing) return;
     setIsProcessing(true);
     try {
@@ -219,8 +229,8 @@ const App: React.FC = () => {
       const shortCode = Math.floor(1000 + Math.random() * 9000).toString();
       
       const roomData = {
-        id: roomId,
-        shortCode,
+        id: roomId || "",
+        shortCode: shortCode,
         hostId: myUid,
         hostName: profile.displayName || '익명',
         status: 'waiting',
@@ -229,8 +239,8 @@ const App: React.FC = () => {
           [myUid]: {
             uid: myUid,
             displayName: profile.displayName || '익명',
-            photoURL: profile.photoURL,
-            characterId: profile.selectedCharacter,
+            photoURL: profile.photoURL || "", // undefined 방지
+            characterId: profile.selectedCharacter || "rabbit",
             customCharacterURL: profile.customCharacterURL || null,
             currentFloor: 0,
             isReady: false,
@@ -239,14 +249,11 @@ const App: React.FC = () => {
         }
       };
 
-      // 데이터 저장 완료를 확실히 기다림
       await set(newRoomRef, roomData);
-      
-      // 저장 후 해시 변경 (setCurrentRoomId를 트리거함)
       window.location.hash = roomId || '';
     } catch (e: any) {
       console.error("Room create error:", e);
-      alert('방을 만들지 못했습니다. 인터넷 연결을 확인해주세요! 😭');
+      alert('방을 만들지 못했습니다. 잠시 후 다시 시도해주세요!');
     } finally {
       setIsProcessing(false);
     }
@@ -265,18 +272,17 @@ const App: React.FC = () => {
       const myUid = currentUser.uid;
       const playerRef = ref(rtdb, `rooms/${roomId}/players/${myUid}`);
       
-      // 방이 존재하는지 먼저 확인
       const roomSnap = await get(ref(rtdb, `rooms/${roomId}`));
       if (!roomSnap.exists()) {
-        alert('이미 사라진 방인 것 같아요! 💨');
+        alert('사라진 방입니다! 💨');
         return;
       }
 
       await set(playerRef, {
         uid: myUid,
         displayName: profile.displayName || '익명',
-        photoURL: profile.photoURL,
-        characterId: profile.selectedCharacter,
+        photoURL: profile.photoURL || "", // undefined 방지
+        characterId: profile.selectedCharacter || "rabbit",
         customCharacterURL: profile.customCharacterURL || null,
         currentFloor: 0,
         isReady: false,
@@ -286,7 +292,7 @@ const App: React.FC = () => {
       window.location.hash = roomId;
     } catch (e: any) {
       console.error("Join room error:", e);
-      alert('방에 들어가지 못했습니다. 다시 시도해주세요! ⚠️');
+      alert('방 입장에 실패했습니다!');
     } finally {
       setIsProcessing(false);
     }
@@ -294,11 +300,10 @@ const App: React.FC = () => {
 
   const handleJoinByCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (inputCode.length !== 4) return;
+    if (inputCode.length !== 4 || isProcessing) return;
     
     setIsProcessing(true);
     try {
-      // 최신 방 목록을 직접 조회 (동기화 지연 방지)
       const roomsSnap = await get(ref(rtdb, 'rooms'));
       const roomsData = roomsSnap.val();
       
@@ -308,17 +313,20 @@ const App: React.FC = () => {
         );
         
         if (targetEntry) {
+          // joinRoom 내부에서 isProcessing을 다시 다루므로 여기서 false 처리 후 호출
+          setIsProcessing(false);
           joinRoom(targetEntry[0]);
           setInputCode('');
         } else {
-          alert('방 번호를 찾을 수 없거나 이미 시작된 게임이에요! 🔍');
+          alert('방 번호를 찾을 수 없습니다! 🔍');
+          setIsProcessing(false);
         }
       } else {
-        alert('현재 대기 중인 방이 없습니다. 직접 방을 만들어보세요!');
+        alert('현재 대기 중인 방이 없습니다!');
+        setIsProcessing(false);
       }
     } catch (e) {
       console.error("Join by code error:", e);
-    } finally {
       setIsProcessing(false);
     }
   };
@@ -346,7 +354,7 @@ const App: React.FC = () => {
   const startGame = async () => {
     if (currentRoomId && room) {
       if (Object.keys(room.players).length < 2) {
-        alert('최소 2명이 필요해요! 친구를 초대해보세요.');
+        alert('친구와 함께하려면 최소 2명이 필요해요!');
         return;
       }
       const startDir = 1;
@@ -369,12 +377,13 @@ const App: React.FC = () => {
     if (charId === 'custom') { setShowPhotoOptions(true); return; }
     const currentUser = auth.currentUser;
     if (!profile || !currentUser) return;
+    
     setProfile({ ...profile, selectedCharacter: charId });
     await updateDoc(doc(db, 'users', currentUser.uid), { selectedCharacter: charId });
     if (currentRoomId) {
       await update(ref(rtdb, `rooms/${currentRoomId}/players/${currentUser.uid}`), {
         characterId: charId,
-        customCharacterURL: null
+        customCharacterURL: charId === 'custom' ? profile.customCharacterURL : null
       });
     }
   };
@@ -384,7 +393,6 @@ const App: React.FC = () => {
     if (!currentUser || !profile) return;
     
     setInGame(false);
-    
     if (isPractice) {
       setIsPractice(false);
       return;
@@ -435,13 +443,13 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-pink-50 pb-24 font-['Jua']">
       <header className="bg-white p-3 sm:p-4 shadow-sm flex items-center justify-between border-b-2 border-pink-100 sticky top-0 z-30">
         <div className="flex items-center gap-2 sm:gap-3">
-          <img src={profile?.photoURL} className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-pink-200 bg-pink-50" alt="me" />
+          <img src={profile?.photoURL} className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border-2 border-pink-200 bg-white object-cover" alt="me" />
           <div>
             <p className="font-bold text-gray-700 leading-tight text-base sm:text-lg">{profile?.displayName}</p>
-            <p className="text-[10px] sm:text-xs text-pink-400 font-bold">✨ {profile?.winCount}번 이겼어요!</p>
+            <p className="text-[10px] sm:text-xs text-pink-400 font-bold">✨ {profile?.winCount}번 승리!</p>
           </div>
         </div>
-        <button onClick={() => auth.signOut()} className="text-gray-400 text-[10px] sm:text-xs font-bold bg-gray-50 px-3 py-1.5 rounded-full">로그아웃</button>
+        <button onClick={() => auth.signOut()} className="text-gray-400 text-[10px] sm:text-xs font-bold bg-gray-50 px-3 py-1.5 rounded-full hover:bg-gray-100">로그아웃</button>
       </header>
 
       <main className="max-w-md mx-auto p-4 space-y-4">
@@ -450,36 +458,36 @@ const App: React.FC = () => {
             <section className="bg-white p-4 sm:p-6 rounded-3xl shadow-xl border-b-8 border-pink-100 text-center relative overflow-hidden">
               <input type="file" ref={fileInputRef} onChange={handlePhotoUpload} accept="image/*" className="hidden" />
               <canvas ref={canvasRef} className="hidden" />
-              <h2 className="text-lg font-bold text-gray-800 mb-3">내 캐릭터 바꾸기</h2>
-              <div className="grid grid-cols-5 gap-2 overflow-x-auto pb-2">
+              <h2 className="text-lg font-bold text-gray-800 mb-3">캐릭터 선택</h2>
+              <div className="grid grid-cols-5 gap-2 overflow-x-auto pb-2 scrollbar-hide">
                 {CHARACTERS.map(char => (
                   <button 
                     key={char.id}
                     onClick={() => selectCharacter(char.id)}
-                    className={`p-2 rounded-2xl transition-all flex flex-col items-center justify-center min-w-[60px] ${profile?.selectedCharacter === char.id ? 'bg-pink-100 border-2 border-pink-400 scale-105' : 'bg-gray-50'}`}
+                    className={`p-2 rounded-2xl transition-all flex flex-col items-center justify-center min-w-[64px] ${profile?.selectedCharacter === char.id ? 'bg-pink-100 border-2 border-pink-400 scale-105 shadow-inner' : 'bg-gray-50 hover:bg-gray-100'}`}
                   >
                     <span className="text-3xl">
                       {char.id === 'custom' && profile?.customCharacterURL ? (
-                        <img src={profile.customCharacterURL} className="w-10 h-10 rounded-full object-cover border-2 border-white" alt="custom" />
+                        <img src={profile.customCharacterURL} className="w-10 h-10 rounded-full object-cover border-2 border-white shadow-sm" alt="custom" />
                       ) : char.emoji}
                     </span>
-                    <span className="text-[10px] mt-1 text-gray-400 font-bold">{char.id === 'custom' ? '내 사진' : char.name.split(' ')[1]}</span>
+                    <span className="text-[10px] mt-1 text-gray-500 font-bold">{char.id === 'custom' ? '내 사진' : char.name.split(' ')[1]}</span>
                   </button>
                 ))}
               </div>
               
               {showPhotoOptions && (
-                <div className="absolute inset-0 bg-white/95 backdrop-blur-md flex flex-col items-center justify-center p-4 z-40">
-                  <h3 className="text-xl font-bold text-pink-500 mb-6">사진 가져오기</h3>
+                <div className="absolute inset-0 bg-white/95 backdrop-blur-md flex flex-col items-center justify-center p-4 z-40 animate-in fade-in duration-300">
+                  <h3 className="text-xl font-bold text-pink-500 mb-6">나만의 캐릭터 만들기</h3>
                   <div className="grid grid-cols-2 gap-4 w-full max-w-[280px]">
-                    <button onClick={openCamera} className="bg-sky-400 text-white p-4 rounded-3xl shadow-lg flex flex-col items-center gap-2">
+                    <button onClick={openCamera} className="bg-sky-400 text-white p-4 rounded-3xl shadow-lg flex flex-col items-center gap-2 active:scale-95 transition-transform">
                        <span className="text-4xl">📸</span><span className="font-bold">사진 찍기</span>
                     </button>
-                    <button onClick={() => fileInputRef.current?.click()} className="bg-pink-400 text-white p-4 rounded-3xl shadow-lg flex flex-col items-center gap-2">
+                    <button onClick={() => fileInputRef.current?.click()} className="bg-pink-400 text-white p-4 rounded-3xl shadow-lg flex flex-col items-center gap-2 active:scale-95 transition-transform">
                        <span className="text-4xl">🖼️</span><span className="font-bold">앨범 선택</span>
                     </button>
                   </div>
-                  <button onClick={() => setShowPhotoOptions(false)} className="mt-8 text-gray-400 font-bold">닫기</button>
+                  <button onClick={() => setShowPhotoOptions(false)} className="mt-8 text-gray-400 font-bold hover:text-gray-600">나중에 할래요</button>
                 </div>
               )}
 
@@ -503,36 +511,38 @@ const App: React.FC = () => {
             </section>
 
             <div className="grid grid-cols-2 gap-4">
-              <button disabled={isProcessing} onClick={createRoom} className="bg-pink-500 hover:bg-pink-600 disabled:bg-pink-200 text-white text-xl font-bold py-6 rounded-3xl shadow-lg border-b-4 border-pink-700 active:translate-y-1 active:border-b-0 transition-all">방 만들기</button>
+              <button disabled={isProcessing || !profile} onClick={createRoom} className="bg-pink-500 hover:bg-pink-600 disabled:bg-pink-200 text-white text-xl font-bold py-6 rounded-3xl shadow-lg border-b-4 border-pink-700 active:translate-y-1 active:border-b-0 transition-all">방 만들기</button>
               <button onClick={startPractice} className="bg-green-500 hover:bg-green-600 text-white text-xl font-bold py-6 rounded-3xl shadow-lg border-b-4 border-green-700 active:translate-y-1 active:border-b-0 transition-all">혼자 연습</button>
             </div>
 
             <section className="bg-yellow-100 p-6 rounded-3xl shadow-lg border-2 border-yellow-200">
-               <h3 className="text-center font-bold text-yellow-700 mb-3">🔢 친구 방 번호로 입장!</h3>
+               <h3 className="text-center font-bold text-yellow-700 mb-3">🔢 초대 코드로 입장하기</h3>
                <form onSubmit={handleJoinByCode} className="flex gap-2">
                  <input 
-                   type="text" inputMode="numeric" maxLength={4} placeholder="번호 4자리"
-                   className="flex-1 p-4 rounded-2xl border-2 border-yellow-300 text-center text-2xl font-bold text-yellow-700 focus:outline-none"
+                   type="text" inputMode="numeric" maxLength={4} placeholder="숫자 4자리"
+                   className="flex-1 p-4 rounded-2xl border-2 border-yellow-300 text-center text-2xl font-bold text-yellow-700 focus:outline-none focus:border-yellow-500"
                    value={inputCode}
                    onChange={(e) => setInputCode(e.target.value.replace(/[^0-9]/g, ''))}
                  />
-                 <button disabled={isProcessing} className="bg-yellow-500 disabled:bg-yellow-200 text-white px-6 py-2 rounded-2xl font-bold">입장</button>
+                 <button disabled={isProcessing || inputCode.length !== 4} className="bg-yellow-500 disabled:bg-yellow-200 text-white px-6 py-2 rounded-2xl font-bold active:scale-95 transition-transform">입장</button>
                </form>
             </section>
 
             <section className="bg-white p-6 rounded-3xl shadow-lg border-2 border-sky-100">
-              <h3 className="font-bold text-lg mb-3 text-sky-600">☁️ 현재 대기 중인 방</h3>
+              <h3 className="font-bold text-lg mb-3 text-sky-600 flex items-center gap-2">
+                <span className="animate-pulse">●</span> 현재 대기 중인 방
+              </h3>
               <div className="space-y-3">
                 {availableRooms.length === 0 ? (
-                  <div className="py-10 text-center text-gray-300 font-bold bg-gray-50 rounded-3xl border-2 border-dashed border-gray-100">현재 대기중인 방이 없어요.</div>
+                  <div className="py-10 text-center text-gray-300 font-bold bg-gray-50 rounded-3xl border-2 border-dashed border-gray-100">대기 중인 방이 없습니다.</div>
                 ) : (
                   availableRooms.map(r => (
-                    <div key={r.id} className="flex items-center justify-between p-4 rounded-2xl bg-sky-50 border border-sky-100">
+                    <div key={r.id} className="flex items-center justify-between p-4 rounded-2xl bg-sky-50 border border-sky-100 animate-in slide-in-from-bottom-2 duration-300">
                       <div className="min-w-0 flex-1">
                         <span className="font-bold text-gray-700 text-lg truncate block">{r.hostName}님의 방</span>
-                        <span className="text-xs text-sky-400 font-bold">번호: {r.shortCode} | 인원: {Object.keys(r.players).length}/4</span>
+                        <span className="text-xs text-sky-400 font-bold uppercase tracking-tight">Code: {r.shortCode} • {Object.keys(r.players || {}).length}명 대기중</span>
                       </div>
-                      <button onClick={() => joinRoom(r.id)} className="bg-sky-500 text-white px-6 py-2 rounded-xl font-bold text-sm shadow-md">입장!</button>
+                      <button onClick={() => joinRoom(r.id)} className="bg-sky-500 hover:bg-sky-600 text-white px-6 py-2 rounded-xl font-bold text-sm shadow-md active:scale-95 transition-transform">입장!</button>
                     </div>
                   ))
                 )}
@@ -542,19 +552,19 @@ const App: React.FC = () => {
         )}
 
         {view === 'room' && room && (
-          <div className="bg-white p-6 rounded-3xl shadow-xl text-center border-2 border-sky-100">
+          <div className="bg-white p-6 rounded-3xl shadow-xl text-center border-2 border-sky-100 animate-in zoom-in duration-300">
             <div className="bg-yellow-100 py-4 rounded-2xl mb-6 border-2 border-yellow-200">
               <p className="text-xs text-yellow-600 font-bold mb-1">우리 방 번호</p>
               <h2 className="text-5xl font-black text-yellow-700 tracking-widest">{room.shortCode}</h2>
             </div>
             
             <div className="grid grid-cols-2 gap-6 mb-10">
-              {Object.values(room.players).map((p: any) => (
-                <div key={p.uid} className="flex flex-col items-center gap-2 p-4 bg-gray-50 rounded-2xl relative">
-                  {p.uid === room.hostId && <span className="absolute -top-2 -left-2 text-2xl">👑</span>}
+              {Object.values(room.players || {}).map((p: any) => (
+                <div key={p.uid} className="flex flex-col items-center gap-2 p-4 bg-gray-50 rounded-2xl relative animate-in fade-in duration-500">
+                  {p.uid === room.hostId && <span className="absolute -top-2 -left-2 text-2xl drop-shadow-md">👑</span>}
                   <div className="relative">
-                     <img src={p.customCharacterURL || p.photoURL} className="w-20 h-20 rounded-full border-4 border-white shadow-md object-cover bg-white" alt="" />
-                     <span className="absolute -bottom-1 -right-1 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-md border border-gray-100">
+                     <img src={p.customCharacterURL || p.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${p.uid}`} className="w-20 h-20 rounded-full border-4 border-white shadow-md object-cover bg-white" alt="" />
+                     <span className="absolute -bottom-1 -right-1 bg-white rounded-full w-8 h-8 flex items-center justify-center shadow-md border border-gray-100 text-xl">
                        {CHARACTERS.find(c => c.id === p.characterId)?.emoji || '🐰'}
                      </span>
                   </div>
@@ -565,43 +575,51 @@ const App: React.FC = () => {
 
             <div className="space-y-4">
               {room.hostId === auth.currentUser?.uid ? (
-                <button onClick={startGame} disabled={Object.keys(room.players).length < 2} className={`w-full py-5 rounded-2xl text-white font-bold text-2xl shadow-lg border-b-4 ${Object.keys(room.players).length < 2 ? 'bg-gray-300 border-gray-400' : 'bg-pink-500 border-pink-700 hover:bg-pink-600'}`}>
-                  {Object.keys(room.players).length < 2 ? '친구를 더 기다려요' : '게임 시작! 🎉'}
+                <button 
+                  onClick={startGame} 
+                  disabled={Object.keys(room.players || {}).length < 2} 
+                  className={`w-full py-5 rounded-3xl text-white font-bold text-2xl shadow-lg border-b-8 transition-all active:translate-y-2 active:border-b-0 ${Object.keys(room.players || {}).length < 2 ? 'bg-gray-300 border-gray-400' : 'bg-pink-500 border-pink-700 hover:bg-pink-600'}`}
+                >
+                  {Object.keys(room.players || {}).length < 2 ? '친구를 더 기다려요' : '게임 시작! 🎉'}
                 </button>
               ) : (
-                <div className="p-5 bg-sky-50 rounded-2xl text-sky-500 font-bold animate-pulse">방장이 시작하길 기다리고 있어요...</div>
+                <div className="p-6 bg-sky-50 rounded-3xl text-sky-500 font-bold animate-pulse text-lg border-2 border-sky-100">방장이 시작하길 기다리고 있어요...</div>
               )}
-              <button onClick={leaveRoom} className="w-full py-2 text-gray-400 font-bold hover:text-gray-600 transition">나가기</button>
+              <button onClick={leaveRoom} className="w-full py-2 text-gray-400 font-bold hover:text-gray-600 transition">방 나가기</button>
             </div>
           </div>
         )}
 
         {view === 'ranking' && (
-          <div className="bg-white p-6 rounded-3xl shadow-xl border-2 border-pink-100">
+          <div className="bg-white p-6 rounded-3xl shadow-xl border-2 border-pink-100 animate-in slide-in-from-right-4 duration-300">
              <h2 className="text-2xl font-bold text-center text-pink-500 mb-6 flex items-center justify-center gap-3">
                <span className="text-3xl">🏆</span> 명예의 전당
              </h2>
              <div className="space-y-4">
-               {rankings.map((r, i) => (
-                  <div key={r.uid} className="flex items-center justify-between p-4 rounded-2xl bg-pink-50/30 border border-pink-100">
+               {rankings.length === 0 ? (
+                 <p className="text-center text-gray-400 py-10 font-bold">아직 기록이 없습니다!</p>
+               ) : (
+                 rankings.map((r, i) => (
+                  <div key={r.uid} className="flex items-center justify-between p-4 rounded-2xl bg-pink-50/30 border border-pink-100 hover:bg-pink-50 transition-colors">
                     <div className="flex items-center gap-4">
-                      <span className={`text-xl font-bold w-10 h-10 flex items-center justify-center rounded-full ${i === 0 ? 'bg-yellow-400 text-white' : 'bg-white text-pink-300'}`}>{i + 1}</span>
-                      <img src={r.customCharacterURL || r.photoURL} className="w-12 h-12 rounded-full border-2 border-white object-cover bg-white" alt="" />
+                      <span className={`text-xl font-bold w-10 h-10 flex items-center justify-center rounded-full shadow-sm ${i === 0 ? 'bg-yellow-400 text-white' : i === 1 ? 'bg-gray-200 text-gray-600' : i === 2 ? 'bg-orange-200 text-orange-700' : 'bg-white text-pink-300'}`}>{i + 1}</span>
+                      <img src={r.customCharacterURL || r.photoURL} className="w-12 h-12 rounded-full border-2 border-white object-cover bg-white shadow-sm" alt="" />
                       <span className="font-bold text-gray-700">{r.displayName}</span>
                     </div>
                     <span className="text-pink-500 font-bold text-xl">{r.winCount}승</span>
                   </div>
-               ))}
+                 ))
+               )}
              </div>
           </div>
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-pink-50 h-20 flex items-center justify-around z-50 shadow-lg">
-        <button onClick={() => setView('lobby')} className={`flex flex-col items-center gap-1 flex-1 ${view === 'lobby' ? 'text-pink-500' : 'text-gray-300'}`}>
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-4 border-pink-50 h-20 flex items-center justify-around z-50 shadow-2xl px-4 rounded-t-3xl">
+        <button onClick={() => setView('lobby')} className={`flex flex-col items-center gap-1 flex-1 py-2 rounded-2xl transition-all ${view === 'lobby' ? 'text-pink-500 bg-pink-50 scale-105' : 'text-gray-300 hover:text-pink-200'}`}>
           <span className="text-3xl transition-transform active:scale-90">🏠</span><span className="text-xs font-bold">홈</span>
         </button>
-        <button onClick={() => setView('ranking')} className={`flex flex-col items-center gap-1 flex-1 ${view === 'ranking' ? 'text-pink-500' : 'text-gray-300'}`}>
+        <button onClick={() => setView('ranking')} className={`flex flex-col items-center gap-1 flex-1 py-2 rounded-2xl transition-all ${view === 'ranking' ? 'text-pink-500 bg-pink-50 scale-105' : 'text-gray-300 hover:text-pink-200'}`}>
           <span className="text-3xl transition-transform active:scale-90">🏆</span><span className="text-xs font-bold">랭킹</span>
         </button>
       </nav>
