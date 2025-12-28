@@ -162,6 +162,8 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
     let nextFacing = facingRef.current;
     if (type === 'turn') {
       nextFacing = nextFacing === 1 ? 0 : 1;
+      // 방향 전환 소리
+      playSound('turn');
     }
 
     const nextFloor = floorRef.current + 1;
@@ -172,7 +174,11 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
       setFloor(nextFloor);
       setFacing(nextFacing);
       setIsMoving(true);
-      playSound('tap');
+      
+      // 오르기일 때만 점프 소리 재생
+      if (type === 'up') {
+        playSound('jump');
+      }
       
       if (movingTimeoutRef.current) clearTimeout(movingTimeoutRef.current);
       movingTimeoutRef.current = window.setTimeout(() => setIsMoving(false), 150);
@@ -187,6 +193,8 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
         });
       }
     } else {
+      // 방향 전환 직후 틀렸을 때도 처리가 필요할 수 있으나, Infinite Stairs 로직상 
+      // handleStep에서 결과 확인 후 맞으면 이동/소리, 틀리면 게임오버
       gameOver();
     }
   }, [gameActive, isDead, stairs, roomId, uid, gameOver, isPractice]);
