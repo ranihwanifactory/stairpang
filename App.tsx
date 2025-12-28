@@ -21,7 +21,6 @@ const App: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [inputCode, setInputCode] = useState('');
 
-  // Authentication & Global Data
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (u) => {
       setUser(u);
@@ -49,7 +48,7 @@ const App: React.FC = () => {
     const q = query(collection(db, 'users'), orderBy('winCount', 'desc'), limit(10));
     const unsubRank = onSnapshot(q, (snapshot) => {
       const ranks: UserProfile[] = [];
-      snapshot.forEach(doc => ranks.push(doc.data() as UserProfile));
+      snapshot.forEach(doc => ranks.push({ ...doc.data(), uid: doc.id } as UserProfile));
       setRankings(ranks);
     });
 
@@ -73,7 +72,6 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Hash Routing Logic
   const handleHashChange = useCallback(() => {
     const hash = window.location.hash.substring(1);
     if (hash && hash.length > 5) {
@@ -91,7 +89,6 @@ const App: React.FC = () => {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, [handleHashChange]);
 
-  // Room Sync Logic
   useEffect(() => {
     if (currentRoomId) {
       const roomRef = ref(rtdb, `rooms/${currentRoomId}`);
@@ -99,11 +96,7 @@ const App: React.FC = () => {
         const data = snapshot.val();
         if (data) {
           setRoom(data);
-          if (data.status === 'playing') {
-            setInGame(true);
-          } else {
-            setInGame(false);
-          }
+          setInGame(data.status === 'playing');
         } else {
           setRoom(null);
           setCurrentRoomId(null);
@@ -118,17 +111,13 @@ const App: React.FC = () => {
   const createRoom = async () => {
     const currentUser = auth.currentUser;
     if (!currentUser || !profile || isProcessing) return;
-
     setIsProcessing(true);
     try {
       const myUid = currentUser.uid;
       const newRoomRef = push(ref(rtdb, 'rooms'));
       const roomId = newRoomRef.key;
-      // 4자리 짧은 방코드 생성
       const shortCode = Math.floor(1000 + Math.random() * 9000).toString();
-
       if (!roomId || !myUid) throw new Error("ID 생성 실패");
-
       const roomData = {
         id: roomId,
         shortCode: shortCode,
@@ -141,14 +130,13 @@ const App: React.FC = () => {
             uid: myUid,
             displayName: profile.displayName || currentUser.displayName || '익명',
             photoURL: profile.photoURL || currentUser.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${myUid}`,
-            character: CHARACTERS.find(c => c.id === profile.selectedCharacter)?.emoji || '🐰',
+            characterId: profile.selectedCharacter,
             currentFloor: 0,
             isReady: false,
             isFinished: false
           }
         }
       };
-
       await set(newRoomRef, roomData);
       window.location.hash = roomId;
     } catch (e: any) {
@@ -164,11 +152,11 @@ const App: React.FC = () => {
     setIsProcessing(true);
     try {
       const myUid = currentUser.uid;
-      const player: PlayerState = {
+      const player = {
         uid: myUid,
         displayName: profile.displayName || currentUser.displayName || '익명',
         photoURL: profile.photoURL || currentUser.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${myUid}`,
-        character: CHARACTERS.find(c => c.id === profile.selectedCharacter)?.emoji || '🐰',
+        characterId: profile.selectedCharacter,
         currentFloor: 0,
         isReady: false,
         isFinished: false
@@ -226,29 +214,23 @@ const App: React.FC = () => {
   const selectCharacter = async (charId: string) => {
     const currentUser = auth.currentUser;
     if (!profile || !currentUser) return;
-    
     const newProfile = { ...profile, selectedCharacter: charId };
     setProfile(newProfile);
     await updateDoc(doc(db, 'users', currentUser.uid), { selectedCharacter: charId });
-    
     if (currentRoomId) {
-      const emoji = CHARACTERS.find(c => c.id === charId)?.emoji || '🐰';
-      await update(ref(rtdb, `rooms/${currentRoomId}/players/${currentUser.uid}`), { character: emoji });
+      await update(ref(rtdb, `rooms/${currentRoomId}/players/${currentUser.uid}`), { characterId: charId });
     }
   };
 
   const handleGameFinish = async (score: number) => {
     const currentUser = auth.currentUser;
     if (!currentUser || !profile || !room || !currentRoomId) return;
-    
     setInGame(false);
     playSound('win');
-    
     await updateDoc(doc(db, 'users', currentUser.uid), {
       totalGames: (profile.totalGames || 0) + 1,
       winCount: score > 30 ? (profile.winCount || 0) + 1 : (profile.winCount || 0)
     });
-    
     if (room.hostId === currentUser.uid) {
       setTimeout(async () => {
         const resetPlayers: Record<string, any> = {};
@@ -269,10 +251,8 @@ const App: React.FC = () => {
   };
 
   if (!user) return <Auth />;
-
   if (inGame && room && profile) {
-    const myChar = CHARACTERS.find(c => c.id === profile.selectedCharacter)?.emoji || '🐰';
-    return <Game roomId={room.id} uid={user.uid} character={myChar} onFinish={handleGameFinish} />;
+    return <Game roomId={room.id} uid={user.uid} characterId={profile.selectedCharacter} onFinish={handleGameFinish} />;
   }
 
   return (
@@ -291,7 +271,6 @@ const App: React.FC = () => {
       <main className="max-w-md mx-auto p-4 space-y-6">
         {view === 'lobby' && (
           <>
-            {/* 방 번호로 입장 섹션 */}
             <section className="bg-yellow-100 p-6 rounded-3xl shadow-lg border-2 border-yellow-200">
                <h3 className="text-center font-bold text-yellow-700 mb-4 flex items-center justify-center gap-2">
                  <span className="text-2xl">🔢</span> 친구 방 번호로 입장!
@@ -318,19 +297,15 @@ const App: React.FC = () => {
                   <button 
                     key={char.id}
                     onClick={() => selectCharacter(char.id)}
-                    className={`p-3 rounded-2xl text-3xl transition-all ${profile?.selectedCharacter === char.id ? 'bg-pink-100 border-2 border-pink-400 scale-110 shadow-md' : 'bg-gray-50'}`}
+                    className={`p-3 rounded-2xl text-3xl transition-all flex items-center justify-center h-16 ${profile?.selectedCharacter === char.id ? 'bg-pink-100 border-2 border-pink-400 scale-110 shadow-md' : 'bg-gray-50'}`}
                   >
-                    {char.emoji}
+                    <span className="text-4xl">{char.emoji}</span>
                   </button>
                 ))}
               </div>
             </section>
 
-            <button 
-              disabled={isProcessing}
-              onClick={createRoom}
-              className="w-full bg-pink-500 hover:bg-pink-600 text-white text-2xl font-bold py-6 rounded-3xl shadow-lg border-b-4 border-pink-700 flex items-center justify-center gap-3"
-            >
+            <button disabled={isProcessing} onClick={createRoom} className="w-full bg-pink-500 hover:bg-pink-600 text-white text-2xl font-bold py-6 rounded-3xl shadow-lg border-b-4 border-pink-700 flex items-center justify-center gap-3">
               <span className="text-3xl">🎮</span>
               <span>방 만들기</span>
             </button>
@@ -339,9 +314,7 @@ const App: React.FC = () => {
               <h3 className="font-bold text-lg mb-4 text-sky-600">☁️ 현재 대기 중인 방</h3>
               <div className="space-y-3">
                 {availableRooms.length === 0 ? (
-                  <div className="py-10 text-center text-gray-300 font-bold bg-gray-50 rounded-3xl border-2 border-dashed border-gray-100">
-                    심심해요... 방을 만들어보세요!
-                  </div>
+                  <div className="py-10 text-center text-gray-300 font-bold bg-gray-50 rounded-3xl border-2 border-dashed border-gray-100">심심해요... 방을 만들어보세요!</div>
                 ) : (
                   availableRooms.map(r => (
                     <div key={r.id} className="flex items-center justify-between p-5 rounded-2xl bg-sky-50 border border-sky-100">
@@ -352,12 +325,7 @@ const App: React.FC = () => {
                           <span className="bg-white px-2 py-0.5 rounded-full text-[10px] text-sky-400 font-bold border border-sky-100">인원: {Object.keys(r.players).length}/4</span>
                         </div>
                       </div>
-                      <button 
-                        onClick={() => joinRoom(r.id)}
-                        className="bg-sky-500 text-white px-6 py-2 rounded-xl font-bold text-sm shadow-md"
-                      >
-                        입장!
-                      </button>
+                      <button onClick={() => joinRoom(r.id)} className="bg-sky-500 text-white px-6 py-2 rounded-xl font-bold text-sm shadow-md">입장!</button>
                     </div>
                   ))
                 )}
@@ -375,11 +343,13 @@ const App: React.FC = () => {
               </div>
               
               <div className="grid grid-cols-2 gap-6 mb-10">
-                {(Object.values(room.players) as PlayerState[]).map(p => (
+                {Object.values(room.players).map((p: any) => (
                   <div key={p.uid} className="flex flex-col items-center gap-2 p-4 bg-gray-50 rounded-2xl relative">
                     {p.uid === room.hostId && <span className="absolute -top-2 -left-2 text-2xl">👑</span>}
                     <img src={p.photoURL} className="w-20 h-20 rounded-full border-4 border-white shadow-md bg-white" alt="" />
-                    <span className="text-4xl absolute bottom-12 right-4 drop-shadow-lg">{p.character}</span>
+                    <span className="absolute bottom-12 right-4 drop-shadow-lg">
+                       {CHARACTERS.find(c => c.id === p.characterId)?.emoji || '🐰'}
+                    </span>
                     <span className="text-base font-bold text-gray-700 truncate w-full">{p.displayName}</span>
                   </div>
                 ))}
@@ -393,11 +363,7 @@ const App: React.FC = () => {
 
               <div className="space-y-4">
                 {room.hostId === auth.currentUser?.uid ? (
-                  <button 
-                    onClick={startGame}
-                    disabled={Object.keys(room.players).length < 2}
-                    className={`w-full py-5 rounded-2xl text-white font-bold text-2xl shadow-lg border-b-4 ${Object.keys(room.players).length < 2 ? 'bg-gray-300 border-gray-400 opacity-70' : 'bg-pink-500 border-pink-700'}`}
-                  >
+                  <button onClick={startGame} disabled={Object.keys(room.players).length < 2} className={`w-full py-5 rounded-2xl text-white font-bold text-2xl shadow-lg border-b-4 ${Object.keys(room.players).length < 2 ? 'bg-gray-300 border-gray-400 opacity-70' : 'bg-pink-500 border-pink-700'}`}>
                     {Object.keys(room.players).length < 2 ? '친구를 더 기다려요' : '게임 시작! 🎉'}
                   </button>
                 ) : (

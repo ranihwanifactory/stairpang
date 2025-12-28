@@ -3,22 +3,23 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { playSound } from '../utils/audio';
 import { rtdb } from '../firebase';
 import { ref, update, onValue, off } from 'firebase/database';
+import { CharacterSprite } from './CharacterSprite';
 
 interface GameProps {
   roomId: string;
   uid: string;
-  character: string;
+  characterId: string; // ID를 전달받아 Sprite 렌더링
   onFinish: (score: number) => void;
 }
 
 interface OpponentData {
   floor: number;
-  char: string;
+  charId: string;
   name: string;
   facing: number;
 }
 
-export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) => {
+export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }) => {
   const [floor, setFloor] = useState(0);
   const [facing, setFacing] = useState(1); // 0: Left, 1: Right
   const [stairs, setStairs] = useState<number[]>([]); // 0: Left, 1: Right
@@ -27,11 +28,13 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
   const [gameActive, setGameActive] = useState(false);
   const [countdown, setCountdown] = useState(3);
   const [isDead, setIsDead] = useState(false);
+  const [isMoving, setIsMoving] = useState(false);
   
   const timerRef = useRef<number>();
   const lastSyncFloor = useRef(0);
   const floorRef = useRef(0);
   const facingRef = useRef(1);
+  const movingTimeoutRef = useRef<number>();
 
   const generateStairs = useCallback(() => {
     const newStairs = [1];
@@ -58,7 +61,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
           if (pId !== uid) {
             opps[pId] = {
               floor: players[pId].currentFloor || 0,
-              char: players[pId].character || '?',
+              charId: players[pId].characterId || 'rabbit',
               name: players[pId].displayName || '친구',
               facing: players[pId].facing || 1
             };
@@ -125,7 +128,12 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
       facingRef.current = nextFacing;
       setFloor(nextFloor);
       setFacing(nextFacing);
+      setIsMoving(true);
       playSound('tap');
+      
+      if (movingTimeoutRef.current) clearTimeout(movingTimeoutRef.current);
+      movingTimeoutRef.current = window.setTimeout(() => setIsMoving(false), 150);
+
       setTimeLeft(prev => Math.min(30, prev + 0.2));
 
       if (nextFloor - lastSyncFloor.current >= 2) {
@@ -162,12 +170,14 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-[#87CEEB] flex flex-col items-center font-['Jua'] select-none">
+      {/* 배경 */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute bottom-0 w-full h-64 bg-gradient-to-t from-[#4a90e2] to-transparent opacity-30"></div>
         <div className="absolute top-20 left-10 text-8xl opacity-20 animate-pulse">☁️</div>
         <div className="absolute top-60 right-10 text-9xl opacity-10 animate-pulse delay-700">☁️</div>
       </div>
 
+      {/* HUD */}
       <div className="absolute top-6 left-0 right-0 px-6 flex justify-between items-start z-40">
         <div className="flex flex-col gap-2">
           <div className="bg-white/90 px-6 py-2 rounded-2xl font-bold text-3xl shadow-[0_4px_0_#ddd] text-[#333] border-2 border-white">
@@ -187,7 +197,9 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
            </div>
            {Object.entries(opponentFloors).map(([id, data]: [string, OpponentData]) => (
              <div key={id} className="bg-white/80 px-3 py-1 rounded-lg text-xs font-bold border border-pink-200 flex items-center gap-2 animate-bounce">
-               <span>{data.char}</span>
+               <span className="w-5 h-5 flex items-center justify-center">
+                 <CharacterSprite type={data.charId} facing={1} isMoving={false} size={24} />
+               </span>
                <span>{data.name}: {data.floor}F</span>
              </div>
            ))}
@@ -220,7 +232,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
             transform: `translate(${-currentPlayerX}px, ${floor * 40}px)`,
           }}
         >
-          {/* 1. 계단 레이어 (가장 뒤) */}
+          {/* 1. 계단 레이어 */}
           {Array.from({ length: 40 }).map((_, i) => {
             const stairIndex = floor - 10 + i;
             if (stairIndex < 0) return null;
@@ -241,20 +253,20 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
             );
           })}
 
-          {/* 2. 경쟁자(고스트) 레이어 (중간) */}
+          {/* 2. 경쟁자 레이어 */}
           {Object.entries(opponentFloors).map(([id, data]: [string, OpponentData]) => {
             const x = getStairX(data.floor);
             return (
               <div 
                 key={`ghost-${id}`}
-                className="absolute text-5xl opacity-50 z-20 transition-all duration-300"
+                className="absolute z-20 transition-all duration-300"
                 style={{ 
-                  bottom: `${data.floor * 40 + 40}px`, // 발판 높이만큼 보정
+                  bottom: `${data.floor * 40 + 40}px`,
                   left: `${x}px`,
-                  transform: `translateX(-50%) scaleX(${data.facing === 1 ? 1 : -1})` 
+                  transform: `translateX(-50%)` 
                 }}
               >
-                {data.char}
+                <CharacterSprite type={data.charId} facing={data.facing} isMoving={false} size={70} opacity={0.6} />
                 <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded whitespace-nowrap">
                   {data.name}
                 </div>
@@ -262,16 +274,16 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
             );
           })}
 
-          {/* 3. 플레이어 캐릭터 레이어 (가장 앞) */}
+          {/* 3. 플레이어 캐릭터 레이어 */}
           <div 
-            className={`absolute text-7xl z-30 transition-transform duration-100 ${isDead ? 'animate-ping' : ''}`}
+            className={`absolute z-30 transition-transform duration-100 ${isDead ? 'animate-ping' : ''}`}
             style={{ 
-              bottom: `${floor * 40 + 40}px`, // 발판 위에 서 있도록 보정
+              bottom: `${floor * 40 + 40}px`,
               left: `${currentPlayerX}px`,
-              transform: `translateX(-50%) scaleX(${facing === 1 ? 1 : -1})` 
+              transform: `translateX(-50%)` 
             }}
           >
-            {character}
+            <CharacterSprite type={characterId} facing={facing} isMoving={isMoving} size={90} />
             <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-12 h-3 bg-black/20 rounded-full blur-sm -z-10"></div>
           </div>
         </div>
@@ -285,7 +297,6 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
           >
             <span className="text-5xl mb-1 group-active:scale-125 transition-transform">👣</span>
             <span className="font-bold text-xl uppercase tracking-widest">CLIMB</span>
-            <span className="text-[10px] opacity-70">PC: [A] [F] [←]</span>
           </button>
           
           <button 
@@ -294,7 +305,6 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
           >
             <span className="text-5xl mb-1 group-active:rotate-180 transition-transform">🔄</span>
             <span className="font-bold text-xl uppercase tracking-widest">TURN</span>
-            <span className="text-[10px] opacity-70">PC: [D] [J] [→]</span>
           </button>
         </div>
       </div>
