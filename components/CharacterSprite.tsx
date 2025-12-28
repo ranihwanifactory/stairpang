@@ -62,56 +62,59 @@ export const CharacterSprite: React.FC<CharacterSpriteProps> = ({
           `}
         </style>
 
+        {/* 꼬리 (뒤쪽임을 알 수 있게 뒤편에 배치) */}
+        <circle className="animate-body" cx="20" cy="70" r="8" fill={c.secondary} />
+
         {/* 다리 */}
         <ellipse className="animate-leg" cx="35" cy="85" rx="8" ry="12" fill={c.secondary} />
         <ellipse className="animate-leg" cx="65" cy="85" rx="8" ry="12" fill={c.secondary} style={{ animationDelay: '0.1s' }} />
 
         {/* 몸통 */}
-        <ellipse className="animate-body" cx="50" cy="65" rx="25" ry="25" fill={c.primary} stroke={c.secondary} strokeWidth="2" />
+        <ellipse className="animate-body" cx="45" cy="65" rx="25" ry="25" fill={c.primary} stroke={c.secondary} strokeWidth="2" />
         
         {/* 팔 */}
         <ellipse className="animate-arm" cx="28" cy="60" rx="6" ry="15" fill={c.secondary} />
-        <ellipse className="animate-arm" cx="72" cy="60" rx="6" ry="15" fill={c.secondary} style={{ animationDelay: '0.1s' }} />
+        <ellipse className="animate-arm" cx="68" cy="60" rx="6" ry="15" fill={c.secondary} style={{ animationDelay: '0.1s' }} />
 
-        {/* 머리 - 고개 돌리기 시각화를 위해 약간 앞으로 쏠림 */}
-        <g className="animate-body" style={{ transform: 'translateX(3px)' }}>
+        {/* 머리 - 방향성을 위해 진행 방향으로 더 밀어줌 */}
+        <g className="animate-body" style={{ transform: 'translateX(8px)' }}>
           {/* 귀 */}
           {c.earType === 'long' && (
             <>
               <ellipse cx="35" cy="15" rx="6" ry="20" fill={c.primary} transform="rotate(-10 35 15)" />
-              <ellipse cx="65" cy="15" rx="6" ry="20" fill={c.primary} transform="rotate(10 65 15)" />
+              <ellipse cx="60" cy="12" rx="6" ry="22" fill={c.primary} transform="rotate(15 60 12)" />
             </>
           )}
           {c.earType === 'pointy' && (
             <>
               <path d="M25 25 L35 5 L45 25 Z" fill={c.primary} />
-              <path d="M55 25 L65 5 L75 25 Z" fill={c.primary} />
+              <path d="M50 25 L65 3 L75 25 Z" fill={c.primary} />
             </>
           )}
           {c.earType === 'round' && (
             <>
               <circle cx="30" cy="25" r="10" fill={c.secondary} />
-              <circle cx="70" cy="25" r="10" fill={c.secondary} />
+              <circle cx="70" cy="22" r="11" fill={c.secondary} />
             </>
           )}
 
           <circle cx="50" cy="35" r="28" fill={c.primary} stroke={c.secondary} strokeWidth="2" />
           
-          {/* 얼굴 요소 - 진행 방향으로 쏠림 (시선 처리) */}
-          <g transform="translateX(5)">
-            {/* 눈 */}
-            <circle cx="40" cy="30" r="4" fill="#333" />
-            <circle cx="65" cy="30" r="4" fill="#333" />
+          {/* 얼굴 요소 - 앞쪽으로 과감하게 쏠리게 배치 (시선 처리 극대화) */}
+          <g transform="translateX(12)">
+            {/* 눈 - 앞쪽 눈을 더 크게 배치 */}
+            <circle cx="38" cy="30" r="3" fill="#333" />
+            <circle cx="68" cy="30" r="5" fill="#333" />
             {/* 눈동자 하이라이트 */}
-            <circle cx="41" cy="29" r="1.5" fill="white" />
-            <circle cx="66" cy="29" r="1.5" fill="white" />
+            <circle cx="70" cy="28" r="2" fill="white" />
             
             {/* 볼터치 */}
-            <circle cx="35" cy="40" r="5" fill="#FFB6C1" opacity="0.6" />
-            <circle cx="70" cy="40" r="5" fill="#FFB6C1" opacity="0.6" />
+            <circle cx="35" cy="42" r="4" fill="#FFB6C1" opacity="0.4" />
+            <circle cx="75" cy="42" r="6" fill="#FFB6C1" opacity="0.6" />
             
-            {/* 코/입 */}
-            <circle cx="52" cy="42" r="3" fill={c.secondary} />
+            {/* 코/입 - 가장 앞쪽에 배치 */}
+            <circle cx="78" cy="38" r="4" fill={c.secondary} />
+            <path d="M 75 45 Q 78 48 81 45" stroke="#333" fill="none" strokeWidth="1.5" />
           </g>
         </g>
       </svg>
