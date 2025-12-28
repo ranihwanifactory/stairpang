@@ -18,6 +18,8 @@ export interface Room {
   status: 'waiting' | 'playing' | 'finished';
   players: Record<string, PlayerState>;
   stairSequence?: number[]; // 모든 플레이어가 공유할 계단 배열 (0: 왼쪽, 1: 오른쪽)
+  winnerId?: string | null;
+  loserId?: string | null;
   createdAt: number;
 }
 
