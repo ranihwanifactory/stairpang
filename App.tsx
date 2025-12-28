@@ -105,6 +105,7 @@ const App: React.FC = () => {
       setCurrentRoomId(null);
       setView('lobby');
       setRoom(null);
+      setInGame(false);
     }
   }, []);
 
@@ -122,6 +123,7 @@ const App: React.FC = () => {
         const data = snapshot.val();
         if (data) {
           setRoom(data);
+          // 상태가 playing일 때만 게임 진입
           setInGame(data.status === 'playing');
           firstLoad = false;
         } else if (!firstLoad) {
@@ -129,6 +131,7 @@ const App: React.FC = () => {
           setCurrentRoomId(null);
           window.location.hash = '';
           setView('lobby');
+          setInGame(false);
         }
       });
       return () => off(roomRef, 'value', listener);
@@ -137,14 +140,15 @@ const App: React.FC = () => {
 
   const leaveRoom = async (isManualExit = true) => {
     const currentUser = auth.currentUser;
-    // 방 정보가 없는 상태에서 로비 이동만 원할 경우
     if (!currentRoomId || !currentUser) {
       window.location.hash = '';
       setView('lobby');
+      setInGame(false);
+      setCurrentRoomId(null);
+      setRoom(null);
       return;
     }
 
-    // 방장일 경우 확인 절차 (수동 종료 버튼 클릭 시에만)
     if (isManualExit && room?.hostId === currentUser.uid) {
       const confirmLeave = window.confirm("방장이 나가면 방이 완전히 사라져요! 정말 나갈까요? 😢");
       if (!confirmLeave) return;
@@ -155,17 +159,15 @@ const App: React.FC = () => {
       const myUid = currentUser.uid;
       const playersCount = Object.keys(room?.players || {}).length;
       
-      // 방장이거나 혼자 남은 경우 방 전체 삭제
       if (room?.hostId === myUid || playersCount <= 1) {
         await remove(ref(rtdb, `rooms/${currentRoomId}`));
       } else {
-        // 일반 플레이어는 본인 데이터만 삭제
         await remove(ref(rtdb, `rooms/${currentRoomId}/players/${myUid}`));
       }
       
-      // 상태 초기화
       setCurrentRoomId(null);
       setRoom(null);
+      setInGame(false);
       window.location.hash = '';
       setView('lobby');
     } catch (e) {
@@ -202,7 +204,8 @@ const App: React.FC = () => {
             customCharacterURL: profile.customCharacterURL || null,
             currentFloor: 0,
             isReady: false,
-            isFinished: false
+            isFinished: false,
+            facing: 1
           }
         }
       };
@@ -266,7 +269,8 @@ const App: React.FC = () => {
         customCharacterURL: profile.customCharacterURL || null,
         currentFloor: 0,
         isReady: false,
-        isFinished: false
+        isFinished: false,
+        facing: 1
       });
       
       window.location.hash = roomId;
@@ -325,6 +329,7 @@ const App: React.FC = () => {
           if (Math.random() > 0.7) currentX = currentX === 1 ? 0 : 1;
           sequence.push(currentX);
         }
+        // 확실히 playing 상태로 변경
         await update(ref(rtdb, `rooms/${currentRoomId}`), { 
           status: 'playing',
           stairSequence: sequence,
@@ -358,11 +363,11 @@ const App: React.FC = () => {
     });
 
     if (action === 'lobby') {
-      // 로비 선택 시 방에서 즉시 퇴장 (방장은 방 삭제)
       await leaveRoom(false);
     } else {
-      // 재대결 선택 시, 방장은 방 상태만 초기화
+      // 재대결 시 방장이 방을 waiting 상태로 초기화
       if (room.hostId === currentUser.uid) {
+        setIsProcessing(true);
         try {
           const resetPlayers: Record<string, any> = {};
           Object.keys(room.players).forEach(pid => {
@@ -383,6 +388,8 @@ const App: React.FC = () => {
           });
         } catch (e) {
           console.error("Room reset error:", e);
+        } finally {
+          setIsProcessing(false);
         }
       }
     }
@@ -403,7 +410,6 @@ const App: React.FC = () => {
     }
   };
 
-  // 나머지 함수들은 기존과 동일 (processAndSaveImage, handlePhotoUpload 등)
   const processAndSaveImage = async (imageSrc: string) => {
     if (!user || !profile) return;
     setIsProcessing(true);
