@@ -19,6 +19,7 @@ const App: React.FC = () => {
   const [rankings, setRankings] = useState<UserProfile[]>([]);
   const [view, setView] = useState<'lobby' | 'ranking' | 'room'>('lobby');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [inputCode, setInputCode] = useState('');
 
   // Authentication & Global Data
   useEffect(() => {
@@ -115,26 +116,22 @@ const App: React.FC = () => {
   }, [currentRoomId]);
 
   const createRoom = async () => {
-    // CRITICAL: Ensure we have the most up-to-date user reference from auth
     const currentUser = auth.currentUser;
-    if (!currentUser || !profile || isProcessing) {
-      alert("잠시만 기다려주세요. 프로필 정보를 불러오는 중입니다.");
-      return;
-    }
+    if (!currentUser || !profile || isProcessing) return;
 
     setIsProcessing(true);
     try {
       const myUid = currentUser.uid;
       const newRoomRef = push(ref(rtdb, 'rooms'));
       const roomId = newRoomRef.key;
+      // 4자리 짧은 방코드 생성
+      const shortCode = Math.floor(1000 + Math.random() * 9000).toString();
 
-      if (!roomId || !myUid) {
-        throw new Error("필수 정보(ID)가 누락되었습니다.");
-      }
+      if (!roomId || !myUid) throw new Error("ID 생성 실패");
 
-      // Explicitly define every field to ensure NO 'undefined' reaches Firebase
       const roomData = {
         id: roomId,
+        shortCode: shortCode,
         hostId: myUid,
         hostName: profile.displayName || currentUser.displayName || '익명',
         status: 'waiting',
@@ -155,8 +152,7 @@ const App: React.FC = () => {
       await set(newRoomRef, roomData);
       window.location.hash = roomId;
     } catch (e: any) {
-      console.error('Room Creation Error:', e);
-      alert('방을 만들지 못했어요: ' + (e.message || '네트워크 오류'));
+      alert('방 생성 실패!');
     } finally {
       setIsProcessing(false);
     }
@@ -177,15 +173,23 @@ const App: React.FC = () => {
         isReady: false,
         isFinished: false
       };
-      await update(ref(rtdb, `rooms/${roomId}/players`), {
-        [myUid]: player
-      });
+      await update(ref(rtdb, `rooms/${roomId}/players`), { [myUid]: player });
       window.location.hash = roomId;
     } catch (e: any) {
-      console.error('Join Room Error:', e);
-      alert('방에 입장할 수 없어요.');
+      alert('입장 실패!');
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleJoinByCode = (e: React.FormEvent) => {
+    e.preventDefault();
+    const targetRoom = availableRooms.find(r => r.shortCode === inputCode);
+    if (targetRoom) {
+      joinRoom(targetRoom.id);
+      setInputCode('');
+    } else {
+      alert('방 번호를 다시 확인해주세요! 🔍');
     }
   };
 
@@ -211,9 +215,8 @@ const App: React.FC = () => {
 
   const startGame = async () => {
     if (currentRoomId && room) {
-      const playerCount = Object.keys(room.players).length;
-      if (playerCount < 2) {
-        alert('혼자서는 대결할 수 없어요! 친구를 최소 한 명 초대해주세요. 🤜🤛');
+      if (Object.keys(room.players).length < 2) {
+        alert('최소 2명이 필요해요! 친구를 초대하세요.');
         return;
       }
       await update(ref(rtdb, `rooms/${currentRoomId}`), { status: 'playing' });
@@ -282,25 +285,40 @@ const App: React.FC = () => {
             <p className="text-xs text-pink-400 font-bold">✨ {profile?.winCount}번 이겼어요!</p>
           </div>
         </div>
-        <button 
-          onClick={() => auth.signOut()} 
-          className="text-gray-400 text-xs font-bold bg-gray-50 px-4 py-2 rounded-full hover:bg-gray-100 transition"
-        >
-          로그아웃
-        </button>
+        <button onClick={() => auth.signOut()} className="text-gray-400 text-xs font-bold bg-gray-50 px-4 py-2 rounded-full hover:bg-gray-100">로그아웃</button>
       </header>
 
       <main className="max-w-md mx-auto p-4 space-y-6">
         {view === 'lobby' && (
           <>
-            <section className="bg-white p-6 rounded-3xl shadow-xl border-b-8 border-pink-100 text-center transform hover:scale-[1.02] transition-transform">
+            {/* 방 번호로 입장 섹션 */}
+            <section className="bg-yellow-100 p-6 rounded-3xl shadow-lg border-2 border-yellow-200">
+               <h3 className="text-center font-bold text-yellow-700 mb-4 flex items-center justify-center gap-2">
+                 <span className="text-2xl">🔢</span> 친구 방 번호로 입장!
+               </h3>
+               <form onSubmit={handleJoinByCode} className="flex gap-2">
+                 <input 
+                   type="text" 
+                   maxLength={4} 
+                   placeholder="번호 4자리"
+                   className="flex-1 p-4 rounded-2xl border-2 border-yellow-300 text-center text-2xl font-bold text-yellow-700 focus:outline-none focus:ring-4 focus:ring-yellow-200"
+                   value={inputCode}
+                   onChange={(e) => setInputCode(e.target.value.replace(/[^0-9]/g, ''))}
+                 />
+                 <button className="bg-yellow-500 text-white px-6 rounded-2xl font-bold shadow-md hover:bg-yellow-600 active:scale-95 transition">
+                   입장
+                 </button>
+               </form>
+            </section>
+
+            <section className="bg-white p-6 rounded-3xl shadow-xl border-b-8 border-pink-100 text-center">
               <h2 className="text-xl font-bold text-gray-800 mb-4">내 캐릭터 바꾸기</h2>
               <div className="grid grid-cols-4 gap-3">
                 {CHARACTERS.map(char => (
                   <button 
                     key={char.id}
                     onClick={() => selectCharacter(char.id)}
-                    className={`p-3 rounded-2xl text-3xl transition-all ${profile?.selectedCharacter === char.id ? 'bg-pink-100 border-2 border-pink-400 scale-110 shadow-md' : 'bg-gray-50 border-2 border-transparent hover:bg-gray-100'}`}
+                    className={`p-3 rounded-2xl text-3xl transition-all ${profile?.selectedCharacter === char.id ? 'bg-pink-100 border-2 border-pink-400 scale-110 shadow-md' : 'bg-gray-50'}`}
                   >
                     {char.emoji}
                   </button>
@@ -311,32 +329,32 @@ const App: React.FC = () => {
             <button 
               disabled={isProcessing}
               onClick={createRoom}
-              className={`w-full bg-pink-500 hover:bg-pink-600 text-white text-2xl font-bold py-6 rounded-3xl shadow-lg transform transition active:scale-95 border-b-4 border-pink-700 flex items-center justify-center gap-3 ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
+              className="w-full bg-pink-500 hover:bg-pink-600 text-white text-2xl font-bold py-6 rounded-3xl shadow-lg border-b-4 border-pink-700 flex items-center justify-center gap-3"
             >
               <span className="text-3xl">🎮</span>
               <span>방 만들기</span>
             </button>
 
             <section className="bg-white p-6 rounded-3xl shadow-lg border-2 border-sky-100">
-              <h3 className="font-bold text-lg mb-4 text-sky-600 flex items-center gap-2">
-                <span className="animate-bounce">☁️</span> 대기 중인 친구들
-              </h3>
+              <h3 className="font-bold text-lg mb-4 text-sky-600">☁️ 현재 대기 중인 방</h3>
               <div className="space-y-3">
                 {availableRooms.length === 0 ? (
-                  <div className="py-10 text-center text-gray-300 font-bold border-2 border-dashed border-gray-100 rounded-3xl bg-gray-50/50">
-                    심심해요...<br/>방을 만들고 친구를 기다려볼까요?
+                  <div className="py-10 text-center text-gray-300 font-bold bg-gray-50 rounded-3xl border-2 border-dashed border-gray-100">
+                    심심해요... 방을 만들어보세요!
                   </div>
                 ) : (
                   availableRooms.map(r => (
-                    <div key={r.id} className="flex items-center justify-between p-5 rounded-2xl bg-sky-50 border border-sky-100 hover:border-sky-300 transition-all group">
-                      <div className="flex flex-col">
+                    <div key={r.id} className="flex items-center justify-between p-5 rounded-2xl bg-sky-50 border border-sky-100">
+                      <div>
                         <span className="font-bold text-gray-700 text-lg">{r.hostName}님의 방</span>
-                        <span className="text-xs text-sky-400 font-bold">참여 인원: {Object.keys(r.players || {}).length} / 4</span>
+                        <div className="flex gap-2 mt-1">
+                          <span className="bg-white px-2 py-0.5 rounded-full text-[10px] text-sky-400 font-bold border border-sky-100">번호: {r.shortCode}</span>
+                          <span className="bg-white px-2 py-0.5 rounded-full text-[10px] text-sky-400 font-bold border border-sky-100">인원: {Object.keys(r.players).length}/4</span>
+                        </div>
                       </div>
                       <button 
-                        disabled={isProcessing}
                         onClick={() => joinRoom(r.id)}
-                        className="bg-sky-500 text-white px-6 py-2 rounded-xl font-bold text-sm shadow-md hover:bg-sky-600 active:scale-95 transition"
+                        className="bg-sky-500 text-white px-6 py-2 rounded-xl font-bold text-sm shadow-md"
                       >
                         입장!
                       </button>
@@ -350,74 +368,42 @@ const App: React.FC = () => {
 
         {view === 'room' && room && (
           <div className="space-y-6">
-            <div className="bg-white p-8 rounded-3xl shadow-xl text-center border-2 border-sky-100 relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-full h-2 bg-sky-100"></div>
-              <h2 className="text-2xl font-bold mb-2 text-sky-600">준비 대기실</h2>
-              <p className="text-gray-400 text-sm mb-8 font-bold">친구들이 2명 이상 모여야 시작해요! 👫</p>
+            <div className="bg-white p-8 rounded-3xl shadow-xl text-center border-2 border-sky-100">
+              <div className="bg-yellow-100 py-3 rounded-2xl mb-6 border-2 border-yellow-200">
+                <p className="text-sm text-yellow-600 font-bold mb-1">우리 방 번호</p>
+                <h2 className="text-5xl font-black text-yellow-700 tracking-widest">{room.shortCode}</h2>
+              </div>
               
               <div className="grid grid-cols-2 gap-6 mb-10">
-                {(Object.values(room.players || {}) as PlayerState[]).map(p => (
-                  <div key={p.uid} className="flex flex-col items-center gap-2 p-4 bg-gray-50 rounded-2xl border-2 border-transparent hover:border-sky-100 transition-all">
-                    <div className="relative">
-                      <img src={p.photoURL} className="w-20 h-20 rounded-full border-4 border-white shadow-md bg-white" alt="" />
-                      <span className="absolute -bottom-2 -right-2 text-4xl drop-shadow-lg animate-pulse">{p.character}</span>
-                    </div>
+                {(Object.values(room.players) as PlayerState[]).map(p => (
+                  <div key={p.uid} className="flex flex-col items-center gap-2 p-4 bg-gray-50 rounded-2xl relative">
+                    {p.uid === room.hostId && <span className="absolute -top-2 -left-2 text-2xl">👑</span>}
+                    <img src={p.photoURL} className="w-20 h-20 rounded-full border-4 border-white shadow-md bg-white" alt="" />
+                    <span className="text-4xl absolute bottom-12 right-4 drop-shadow-lg">{p.character}</span>
                     <span className="text-base font-bold text-gray-700 truncate w-full">{p.displayName}</span>
-                    <span className="text-[10px] text-sky-400 font-bold uppercase tracking-wider">Ready</span>
                   </div>
                 ))}
-                {Array.from({ length: Math.max(0, 4 - Object.keys(room.players || {}).length) }).map((_, i) => (
+                {Array.from({ length: Math.max(0, 4 - Object.keys(room.players).length) }).map((_, i) => (
                   <div key={i} className="flex flex-col items-center gap-2 p-4 border-2 border-dashed border-gray-100 rounded-2xl opacity-40">
-                    <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
-                       <span className="text-4xl text-gray-300">?</span>
-                    </div>
+                    <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center"><span className="text-3xl text-gray-300">?</span></div>
                     <span className="text-xs text-gray-300 font-bold">기다리는 중</span>
                   </div>
                 ))}
               </div>
 
               <div className="space-y-4">
-                <button 
-                  onClick={() => {
-                    const url = `${window.location.origin}/#${room.id}`;
-                    navigator.clipboard.writeText(url);
-                    alert('친구 초대 링크가 복사되었어요! 💌');
-                  }}
-                  className="w-full py-4 rounded-2xl bg-sky-50 text-sky-600 font-bold border-2 border-sky-100 hover:bg-sky-100 transition flex items-center justify-center gap-2"
-                >
-                  <span>🔗</span> 초대 링크 복사하기
-                </button>
-
                 {room.hostId === auth.currentUser?.uid ? (
-                  <div className="space-y-2">
-                    <button 
-                      onClick={startGame}
-                      disabled={Object.keys(room.players || {}).length < 2}
-                      className={`w-full py-5 rounded-2xl text-white font-bold text-2xl shadow-lg border-b-4 transition-all ${
-                        Object.keys(room.players || {}).length < 2 
-                        ? 'bg-gray-300 border-gray-400 cursor-not-allowed opacity-70' 
-                        : 'bg-pink-500 border-pink-700 hover:bg-pink-600 active:translate-y-1 active:border-b-0'
-                      }`}
-                    >
-                      {Object.keys(room.players || {}).length < 2 ? '친구를 기다려요' : '시작하기! 🎉'}
-                    </button>
-                    {Object.keys(room.players || {}).length < 2 && (
-                      <p className="text-pink-400 text-xs font-bold animate-bounce">최소 2명이 모여야 시작할 수 있어요!</p>
-                    )}
-                  </div>
+                  <button 
+                    onClick={startGame}
+                    disabled={Object.keys(room.players).length < 2}
+                    className={`w-full py-5 rounded-2xl text-white font-bold text-2xl shadow-lg border-b-4 ${Object.keys(room.players).length < 2 ? 'bg-gray-300 border-gray-400 opacity-70' : 'bg-pink-500 border-pink-700'}`}
+                  >
+                    {Object.keys(room.players).length < 2 ? '친구를 더 기다려요' : '게임 시작! 🎉'}
+                  </button>
                 ) : (
-                  <div className="p-5 bg-sky-50 rounded-2xl text-sky-500 font-bold animate-pulse border-2 border-sky-100">
-                    방장 친구가 게임을 시작하길 기다리고 있어요... ⌛
-                  </div>
+                  <div className="p-5 bg-sky-50 rounded-2xl text-sky-500 font-bold animate-pulse">방장이 시작하길 기다리고 있어요...</div>
                 )}
-
-                <button 
-                  disabled={isProcessing}
-                  onClick={leaveRoom}
-                  className="w-full py-2 text-gray-400 font-bold text-sm hover:text-red-400 transition-colors"
-                >
-                  나가기
-                </button>
+                <button onClick={leaveRoom} className="w-full py-2 text-gray-400 font-bold text-sm">나가기</button>
               </div>
             </div>
           </div>
@@ -429,44 +415,27 @@ const App: React.FC = () => {
                <span className="text-3xl">🏆</span> 명예의 전당
              </h2>
              <div className="space-y-4">
-               {rankings.length === 0 ? (
-                 <p className="text-center text-gray-300 py-10">아직 순위가 없어요. 첫 번째 주인공이 되어보세요!</p>
-               ) : (
-                 rankings.map((r, i) => (
-                    <div key={r.uid} className="flex items-center justify-between p-4 rounded-2xl bg-pink-50/30 border border-pink-100 transform hover:scale-[1.02] transition-transform">
-                      <div className="flex items-center gap-4">
-                        <span className={`text-xl font-bold w-10 h-10 flex items-center justify-center rounded-full shadow-sm ${i === 0 ? 'bg-yellow-400 text-white' : i === 1 ? 'bg-gray-300 text-white' : i === 2 ? 'bg-orange-300 text-white' : 'bg-white text-pink-300 border border-pink-100'}`}>
-                          {i + 1}
-                        </span>
-                        <img src={r.photoURL} className="w-12 h-12 rounded-full shadow-sm border-2 border-white" alt="" />
-                        <span className="font-bold text-gray-700 text-lg">{r.displayName}</span>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-pink-500 font-bold text-xl">{r.winCount}승</p>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">Total: {r.totalGames}</p>
-                      </div>
+               {rankings.map((r, i) => (
+                  <div key={r.uid} className="flex items-center justify-between p-4 rounded-2xl bg-pink-50/30 border border-pink-100">
+                    <div className="flex items-center gap-4">
+                      <span className={`text-xl font-bold w-10 h-10 flex items-center justify-center rounded-full ${i === 0 ? 'bg-yellow-400 text-white' : 'bg-white text-pink-300'}`}>{i + 1}</span>
+                      <img src={r.photoURL} className="w-12 h-12 rounded-full border-2 border-white" alt="" />
+                      <span className="font-bold text-gray-700">{r.displayName}</span>
                     </div>
-                 ))
-               )}
+                    <span className="text-pink-500 font-bold text-xl">{r.winCount}승</span>
+                  </div>
+               ))}
              </div>
           </div>
         )}
       </main>
 
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-pink-50 h-20 flex items-center justify-around z-50 shadow-[0_-8px_20px_rgba(0,0,0,0.05)] px-6">
-        <button 
-          onClick={() => setView('lobby')}
-          className={`flex flex-col items-center gap-1 transition-all flex-1 py-2 rounded-2xl ${view === 'lobby' ? 'text-pink-500 bg-pink-50 scale-105' : 'text-gray-300 hover:text-pink-200'}`}
-        >
-          <span className="text-3xl">🏠</span>
-          <span className="text-xs font-bold">홈</span>
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-pink-50 h-20 flex items-center justify-around z-50">
+        <button onClick={() => setView('lobby')} className={`flex flex-col items-center gap-1 flex-1 ${view === 'lobby' ? 'text-pink-500' : 'text-gray-300'}`}>
+          <span className="text-3xl">🏠</span><span className="text-xs font-bold">홈</span>
         </button>
-        <button 
-          onClick={() => setView('ranking')}
-          className={`flex flex-col items-center gap-1 transition-all flex-1 py-2 rounded-2xl ${view === 'ranking' ? 'text-pink-500 bg-pink-50 scale-105' : 'text-gray-300 hover:text-pink-200'}`}
-        >
-          <span className="text-3xl">🏆</span>
-          <span className="text-xs font-bold">랭킹</span>
+        <button onClick={() => setView('ranking')} className={`flex flex-col items-center gap-1 flex-1 ${view === 'ranking' ? 'text-pink-500' : 'text-gray-300'}`}>
+          <span className="text-3xl">🏆</span><span className="text-xs font-bold">랭킹</span>
         </button>
       </nav>
     </div>

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { playSound } from '../utils/audio';
 import { rtdb } from '../firebase';
@@ -10,7 +11,6 @@ interface GameProps {
   onFinish: (score: number) => void;
 }
 
-// Define the structure for opponent data to fix type errors
 interface OpponentData {
   floor: number;
   char: string;
@@ -33,12 +33,10 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
   const floorRef = useRef(0);
   const facingRef = useRef(1);
 
-  // 계단 생성 (랜덤 경로)
   const generateStairs = useCallback(() => {
-    const newStairs = [1]; // 첫 시작은 오른쪽
+    const newStairs = [1];
     let currentX = 1;
     for (let i = 1; i < 1000; i++) {
-      // 70% 확률로 직진, 30% 확률로 꺾기 (무한의 계단 특유의 리듬)
       const change = Math.random() > 0.7;
       if (change) {
         currentX = currentX === 1 ? 0 : 1;
@@ -122,15 +120,12 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
 
     const nextFloor = floorRef.current + 1;
     
-    // 무한의 계단 핵심 로직: 다음 계단의 방향과 내 진행 방향이 일치해야 함
     if (stairs[nextFloor] === nextFacing) {
       floorRef.current = nextFloor;
       facingRef.current = nextFacing;
       setFloor(nextFloor);
       setFacing(nextFacing);
       playSound('tap');
-
-      // 에너지 보너스 (성공 시 시간 소량 회복)
       setTimeLeft(prev => Math.min(30, prev + 0.2));
 
       if (nextFloor - lastSyncFloor.current >= 2) {
@@ -145,7 +140,6 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
     }
   }, [gameActive, isDead, stairs, roomId, uid, gameOver]);
 
-  // 키보드 조작
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
@@ -156,7 +150,6 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleStep]);
 
-  // 계단 절대 좌표 계산 보조 함수
   const getStairX = (index: number) => {
     let x = 0;
     for (let i = 1; i <= index; i++) {
@@ -169,20 +162,17 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-[#87CEEB] flex flex-col items-center font-['Jua'] select-none">
-      {/* 배경 레이어 (도시/구름) */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute bottom-0 w-full h-64 bg-gradient-to-t from-[#4a90e2] to-transparent opacity-30"></div>
         <div className="absolute top-20 left-10 text-8xl opacity-20 animate-pulse">☁️</div>
         <div className="absolute top-60 right-10 text-9xl opacity-10 animate-pulse delay-700">☁️</div>
       </div>
 
-      {/* 상단 HUD */}
       <div className="absolute top-6 left-0 right-0 px-6 flex justify-between items-start z-40">
         <div className="flex flex-col gap-2">
           <div className="bg-white/90 px-6 py-2 rounded-2xl font-bold text-3xl shadow-[0_4px_0_#ddd] text-[#333] border-2 border-white">
             {floor} <span className="text-sm">STAIRS</span>
           </div>
-          {/* 에너지바 */}
           <div className="w-48 h-6 bg-gray-200 rounded-full border-2 border-white overflow-hidden shadow-inner">
             <div 
               className={`h-full transition-all duration-100 ${timeLeft < 5 ? 'bg-red-500' : 'bg-yellow-400'}`}
@@ -195,7 +185,6 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
            <div className="bg-pink-500 text-white px-4 py-1 rounded-full text-sm font-bold shadow-md">
              실시간 대결 중! 🏁
            </div>
-           {/* Fix: Explicitly typing data in map to resolve 'unknown' property access errors */}
            {Object.entries(opponentFloors).map(([id, data]: [string, OpponentData]) => (
              <div key={id} className="bg-white/80 px-3 py-1 rounded-lg text-xs font-bold border border-pink-200 flex items-center gap-2 animate-bounce">
                <span>{data.char}</span>
@@ -205,7 +194,6 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
         </div>
       </div>
 
-      {/* 게임 오버/카운트다운 오버레이 */}
       {countdown > 0 && (
         <div className="absolute inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center">
            <div className="text-white text-9xl font-bold animate-bounce drop-shadow-2xl">
@@ -224,7 +212,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
         </div>
       )}
 
-      {/* 메인 게임 월드 */}
+      {/* 게임 월드 */}
       <div className="flex-1 w-full relative flex items-center justify-center">
         <div 
           className="relative transition-all duration-150 ease-out"
@@ -232,18 +220,15 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
             transform: `translate(${-currentPlayerX}px, ${floor * 40}px)`,
           }}
         >
-          {/* 계단 렌더링 (최적화를 위해 현재 층 주변만) */}
+          {/* 1. 계단 레이어 (가장 뒤) */}
           {Array.from({ length: 40 }).map((_, i) => {
             const stairIndex = floor - 10 + i;
             if (stairIndex < 0) return null;
-            
             const x = getStairX(stairIndex);
-            const isCurrent = stairIndex === floor;
-            
             return (
               <div 
-                key={stairIndex}
-                className="absolute w-32 h-10 bg-[#f0f0f0] border-b-8 border-[#ccc] rounded-lg shadow-md flex items-center justify-center"
+                key={`stair-${stairIndex}`}
+                className="absolute w-32 h-10 bg-[#f0f0f0] border-b-8 border-[#ccc] rounded-lg shadow-md flex items-center justify-center z-10"
                 style={{
                   bottom: `${stairIndex * 40}px`,
                   left: `${x}px`,
@@ -251,44 +236,47 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, character, onFinish }) 
                   opacity: Math.max(0, 1 - Math.abs(stairIndex - floor) / 20)
                 }}
               >
-                {/* 도트 질감 표현 */}
                 <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#000 1px, transparent 0)', backgroundSize: '4px 4px' }}></div>
-                
-                {/* 플레이어 캐릭터 */}
-                {isCurrent && (
-                  <div 
-                    className={`absolute -top-20 text-7xl transition-transform duration-100 ${isDead ? 'animate-ping' : ''}`}
-                    style={{ transform: `scaleX(${facing === 1 ? 1 : -1})` }}
-                  >
-                    {character}
-                    {/* 그림자 */}
-                    <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-12 h-3 bg-black/20 rounded-full blur-sm"></div>
-                  </div>
-                )}
-
-                {/* 상대방 고스트 (실시간 위치) */}
-                {/* Fix: Explicitly typing data in map to resolve 'unknown' property access errors */}
-                {Object.entries(opponentFloors).map(([id, data]: [string, OpponentData]) => 
-                  data.floor === stairIndex ? (
-                    <div 
-                      key={id}
-                      className="absolute -top-16 text-5xl opacity-50 z-10"
-                      style={{ transform: `scaleX(${data.facing === 1 ? 1 : -1})` }}
-                    >
-                      {data.char}
-                      <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded whitespace-nowrap">
-                        {data.name}
-                      </div>
-                    </div>
-                  ) : null
-                )}
               </div>
             );
           })}
+
+          {/* 2. 경쟁자(고스트) 레이어 (중간) */}
+          {Object.entries(opponentFloors).map(([id, data]: [string, OpponentData]) => {
+            const x = getStairX(data.floor);
+            return (
+              <div 
+                key={`ghost-${id}`}
+                className="absolute text-5xl opacity-50 z-20 transition-all duration-300"
+                style={{ 
+                  bottom: `${data.floor * 40 + 40}px`, // 발판 높이만큼 보정
+                  left: `${x}px`,
+                  transform: `translateX(-50%) scaleX(${data.facing === 1 ? 1 : -1})` 
+                }}
+              >
+                {data.char}
+                <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-black/60 text-white text-[10px] px-2 py-0.5 rounded whitespace-nowrap">
+                  {data.name}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* 3. 플레이어 캐릭터 레이어 (가장 앞) */}
+          <div 
+            className={`absolute text-7xl z-30 transition-transform duration-100 ${isDead ? 'animate-ping' : ''}`}
+            style={{ 
+              bottom: `${floor * 40 + 40}px`, // 발판 위에 서 있도록 보정
+              left: `${currentPlayerX}px`,
+              transform: `translateX(-50%) scaleX(${facing === 1 ? 1 : -1})` 
+            }}
+          >
+            {character}
+            <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-12 h-3 bg-black/20 rounded-full blur-sm -z-10"></div>
+          </div>
         </div>
       </div>
 
-      {/* 하단 컨트롤러 */}
       <div className="w-full bg-white/90 backdrop-blur-md p-8 border-t-4 border-[#eee] z-40">
         <div className="max-w-md mx-auto flex justify-between gap-6 h-36">
           <button 

@@ -11,6 +11,7 @@ export interface UserProfile {
 
 export interface Room {
   id: string;
+  shortCode: string; // 4자리 방번호 추가
   hostId: string;
   hostName: string;
   status: 'waiting' | 'playing' | 'finished';
@@ -26,6 +27,7 @@ export interface PlayerState {
   currentFloor: number;
   isReady: boolean;
   isFinished: boolean;
+  facing?: number;
 }
 
 export const CHARACTERS = [
