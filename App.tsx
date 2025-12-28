@@ -354,13 +354,23 @@ const App: React.FC = () => {
   const leaveRoom = async () => {
     const currentUser = auth.currentUser;
     if (!currentRoomId || !currentUser || isProcessing) return;
+
+    // 방장일 경우 확인 절차 추가
+    if (room?.hostId === currentUser.uid) {
+      const confirmLeave = window.confirm("방장이 나가면 방이 없어져요! 정말 나갈까요? 😢");
+      if (!confirmLeave) return;
+    }
+
     setIsProcessing(true);
     try {
       const myUid = currentUser.uid;
       const playersCount = Object.keys(room?.players || {}).length;
-      if (playersCount <= 1) {
+      
+      // 방장이거나 혼자 남은 경우 방 전체 삭제
+      if (room?.hostId === myUid || playersCount <= 1) {
         await remove(ref(rtdb, `rooms/${currentRoomId}`));
       } else {
+        // 일반 플레이어는 본인 데이터만 삭제
         await remove(ref(rtdb, `rooms/${currentRoomId}/players/${myUid}`));
       }
       window.location.hash = '';
@@ -372,24 +382,31 @@ const App: React.FC = () => {
   };
 
   const startGame = async () => {
-    if (currentRoomId && room) {
+    if (currentRoomId && room && !isProcessing) {
       if (Object.keys(room.players).length < 2) {
         alert('친구와 함께하려면 최소 2명이 필요해요!');
         return;
       }
-      const startDir = 1;
-      const sequence = [startDir, startDir];
-      let currentX = startDir;
-      for (let i = 2; i < 1000; i++) {
-        if (Math.random() > 0.7) currentX = currentX === 1 ? 0 : 1;
-        sequence.push(currentX);
+      setIsProcessing(true);
+      try {
+        const startDir = 1;
+        const sequence = [startDir, startDir];
+        let currentX = startDir;
+        for (let i = 2; i < 1000; i++) {
+          if (Math.random() > 0.7) currentX = currentX === 1 ? 0 : 1;
+          sequence.push(currentX);
+        }
+        await update(ref(rtdb, `rooms/${currentRoomId}`), { 
+          status: 'playing',
+          stairSequence: sequence,
+          winnerId: null,
+          loserId: null
+        });
+      } catch (e) {
+        console.error("Start game error:", e);
+      } finally {
+        setIsProcessing(false);
       }
-      await update(ref(rtdb, `rooms/${currentRoomId}`), { 
-        status: 'playing',
-        stairSequence: sequence,
-        winnerId: null,
-        loserId: null
-      });
     }
   };
 
@@ -420,20 +437,23 @@ const App: React.FC = () => {
 
     if (!room || !currentRoomId) return;
 
+    // 점수 업데이트
     await updateDoc(doc(db, 'users', currentUser.uid), {
       totalGames: increment(1),
       winCount: isWinner ? increment(1) : increment(0)
     });
 
+    // 방장인 경우 방 상태 즉시 대기중으로 초기화 (지연 시간 제거)
     if (room.hostId === currentUser.uid) {
-      setTimeout(async () => {
+      try {
         const resetPlayers: Record<string, any> = {};
         Object.keys(room.players).forEach(pid => {
           resetPlayers[pid] = {
             ...room.players[pid],
             currentFloor: 0,
             isReady: false,
-            isFinished: false
+            isFinished: false,
+            facing: 1
           };
         });
         await update(ref(rtdb, `rooms/${currentRoomId}`), { 
@@ -443,7 +463,9 @@ const App: React.FC = () => {
           winnerId: null,
           loserId: null
         });
-      }, 3000);
+      } catch (e) {
+        console.error("Room reset error:", e);
+      }
     }
   };
 
@@ -604,10 +626,10 @@ const App: React.FC = () => {
               {room.hostId === auth.currentUser?.uid ? (
                 <button 
                   onClick={startGame} 
-                  disabled={Object.keys(room.players || {}).length < 2} 
-                  className={`w-full py-4 sm:py-5 rounded-3xl text-white font-bold text-xl sm:text-2xl shadow-lg border-b-8 transition-all active:translate-y-2 active:border-b-0 ${Object.keys(room.players || {}).length < 2 ? 'bg-gray-300 border-gray-400' : 'bg-pink-500 border-pink-700 hover:bg-pink-600'}`}
+                  disabled={Object.keys(room.players || {}).length < 2 || isProcessing} 
+                  className={`w-full py-4 sm:py-5 rounded-3xl text-white font-bold text-xl sm:text-2xl shadow-lg border-b-8 transition-all active:translate-y-2 active:border-b-0 ${Object.keys(room.players || {}).length < 2 || isProcessing ? 'bg-gray-300 border-gray-400' : 'bg-pink-500 border-pink-700 hover:bg-pink-600'}`}
                 >
-                  {Object.keys(room.players || {}).length < 2 ? '친구를 더 기다려요' : '게임 시작! 🎉'}
+                  {Object.keys(room.players || {}).length < 2 ? '친구를 더 기다려요' : isProcessing ? '준비 중...' : '게임 시작! 🎉'}
                 </button>
               ) : (
                 <div className="p-5 sm:p-6 bg-sky-50 rounded-3xl text-sky-500 font-bold animate-pulse text-base sm:text-lg border-2 border-sky-100">방장이 시작하길 기다리고 있어요...</div>
