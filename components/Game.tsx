@@ -36,11 +36,11 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
   const [isDead, setIsDead] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
   
-  const timerRef = useRef<number>();
+  const timerRef = useRef<any>(null);
   const lastSyncFloor = useRef(0);
   const floorRef = useRef(0);
   const facingRef = useRef(1);
-  const movingTimeoutRef = useRef<number>();
+  const movingTimeoutRef = useRef<any>(null);
 
   const generateStairs = useCallback(() => {
     if (!isPractice && stairSequence) {
@@ -75,6 +75,31 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
     setGameActive(false);
     generateStairs();
   }, [generateStairs]);
+
+  // 게임 종료 로직
+  const gameOver = useCallback(async () => {
+    if (!gameActive || result) return;
+    
+    setGameActive(false);
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    if (isPractice) {
+      setIsDead(true);
+      setResult('lose');
+      playSound('lose');
+      return;
+    }
+
+    // 상대방 찾기 (1:1 기준)
+    const oppIds = Object.keys(opponentFloors);
+    const winnerId = oppIds[0] || 'unknown';
+
+    await update(ref(rtdb, `rooms/${roomId}`), {
+      status: 'finished',
+      winnerId: winnerId,
+      loserId: uid
+    });
+  }, [roomId, uid, opponentFloors, isPractice, gameActive, result]);
 
   useEffect(() => {
     generateStairs();
@@ -143,41 +168,24 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
     };
   }, [roomId, uid, generateStairs, isPractice]);
 
+  // 타이머 실행 이펙트
   useEffect(() => {
     if (gameActive && !isDead && !result) {
-      timerRef.current = window.setInterval(() => {
+      // 100ms 마다 0.1씩 감소 (30초 전체)
+      timerRef.current = setInterval(() => {
         setTimeLeft(prev => {
-          if (prev <= 0.1) {
+          const nextVal = prev - 0.1;
+          if (nextVal <= 0) {
             clearInterval(timerRef.current);
             gameOver();
             return 0;
           }
-          return Math.max(0, prev - 0.1);
+          return nextVal;
         });
       }, 100);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [gameActive, isDead, result]);
-
-  const gameOver = useCallback(async () => {
-    setGameActive(false);
-    if (isPractice) {
-      setIsDead(true);
-      setResult('lose');
-      playSound('lose');
-      return;
-    }
-
-    // 상대방 찾기
-    const oppIds = Object.keys(opponentFloors);
-    const winnerId = oppIds[0] || 'unknown'; // 1:1 대결 기준
-
-    await update(ref(rtdb, `rooms/${roomId}`), {
-      status: 'finished',
-      winnerId: winnerId,
-      loserId: uid
-    });
-  }, [roomId, uid, opponentFloors, isPractice]);
+  }, [gameActive, isDead, result, gameOver]);
 
   const handleStep = useCallback((type: 'up' | 'turn') => {
     if (!gameActive || isDead || result) return;
@@ -202,9 +210,10 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
       }
       
       if (movingTimeoutRef.current) clearTimeout(movingTimeoutRef.current);
-      movingTimeoutRef.current = window.setTimeout(() => setIsMoving(false), 150);
+      movingTimeoutRef.current = setTimeout(() => setIsMoving(false), 150);
 
-      setTimeLeft(prev => Math.min(30, prev + (isPractice ? 0.3 : 0.2))); 
+      // 계단을 오를 때마다 시간 보너스
+      setTimeLeft(prev => Math.min(30, prev + (isPractice ? 0.4 : 0.25))); 
 
       if (!isPractice && nextFloor - lastSyncFloor.current >= 2) {
         lastSyncFloor.current = nextFloor;
@@ -246,27 +255,28 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
 
       <div className="absolute top-6 left-0 right-0 px-6 flex justify-between items-start z-40">
         <div className="flex flex-col gap-2">
-          <div className="bg-white/95 px-6 py-2 rounded-2xl font-bold text-3xl shadow-[0_4px_0_#ccc] text-[#333] border-2 border-white">
-            {floor} <span className="text-sm">STAIRS</span>
+          <div className="bg-white/95 px-4 sm:px-6 py-2 rounded-2xl font-bold text-2xl sm:text-3xl shadow-[0_4px_0_#ccc] text-[#333] border-2 border-white">
+            {floor} <span className="text-xs sm:text-sm uppercase">Stairs</span>
           </div>
-          <div className="w-48 h-6 bg-gray-200/50 rounded-full border-2 border-white overflow-hidden shadow-inner backdrop-blur-sm">
+          <div className="w-40 sm:w-48 h-5 sm:h-6 bg-gray-200/50 rounded-full border-2 border-white overflow-hidden shadow-inner backdrop-blur-sm">
             <div 
-              className={`h-full transition-all duration-100 ${timeLeft < 5 ? 'bg-red-500' : isPractice ? 'bg-green-400' : 'bg-yellow-400'}`}
+              className={`h-full transition-[width] duration-100 ease-linear ${timeLeft < 5 ? 'bg-red-500' : isPractice ? 'bg-green-400' : 'bg-yellow-400'}`}
               style={{ width: `${(timeLeft / 30) * 100}%` }}
             ></div>
           </div>
         </div>
         
         <div className="flex flex-col items-end gap-2">
-           <div className={`${isPractice ? 'bg-green-600' : 'bg-pink-500'} text-white px-4 py-1 rounded-full text-sm font-bold shadow-md border-2 border-white/30`}>
-             {isPractice ? '열심히 연습 중! 🌱' : '실시간 대결 중! 🏁'}
+           <div className={`${isPractice ? 'bg-green-600' : 'bg-pink-500'} text-white px-3 sm:px-4 py-1 rounded-full text-[10px] sm:text-xs font-bold shadow-md border-2 border-white/30`}>
+             {isPractice ? '연습 중 🌱' : '실시간 대결 🏁'}
            </div>
            {!isPractice && (Object.entries(opponentFloors) as [string, OpponentData][]).map(([id, data]) => (
-             <div key={id} className="bg-white/90 px-3 py-1 rounded-lg text-xs font-bold border-2 border-pink-200 flex items-center gap-2 animate-bounce">
+             <div key={id} className="bg-white/90 px-2 sm:px-3 py-1 rounded-lg text-[10px] sm:text-xs font-bold border-2 border-pink-200 flex items-center gap-2 animate-bounce">
                <span className="w-5 h-5 flex items-center justify-center">
-                 <CharacterSprite type={data.charId} facing={1} isMoving={false} size={24} customImageUrl={data.customImageUrl} />
+                 <CharacterSprite type={data.charId} facing={1} isMoving={false} size={20} customImageUrl={data.customImageUrl} />
                </span>
-               <span className="text-pink-600">{data.name}: {data.floor}F</span>
+               <span className="text-pink-600 truncate max-w-[60px]">{data.name}</span>
+               <span>{data.floor}F</span>
              </div>
            ))}
         </div>
@@ -282,25 +292,25 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
 
       {result && (
         <div className="absolute inset-0 z-50 bg-black/40 backdrop-blur-md flex flex-col items-center justify-center p-4">
-           <div className="bg-white p-8 rounded-[40px] shadow-2xl border-8 border-pink-100 text-center animate-in zoom-in duration-300 w-full max-w-sm">
-             <h2 className={`text-6xl ${result === 'win' ? 'text-yellow-500' : 'text-red-500'} mb-2`}>
+           <div className="bg-white p-6 sm:p-8 rounded-[40px] shadow-2xl border-8 border-pink-100 text-center animate-in zoom-in duration-300 w-full max-w-sm">
+             <h2 className={`text-5xl sm:text-6xl ${result === 'win' ? 'text-yellow-500' : 'text-red-500'} mb-2`}>
                {result === 'win' ? '승리! 🏆' : '패배... 😵'}
              </h2>
-             <p className="text-2xl text-gray-700">{result === 'win' ? '와우! 당신이 이겼어요!' : '아쉬워요! 다음엔 꼭!'}</p>
-             <div className="my-6 p-4 bg-gray-50 rounded-3xl">
-                <p className="text-sm text-gray-400">최종 기록</p>
-                <p className="text-5xl text-pink-500 font-bold">{floor}층</p>
+             <p className="text-xl sm:text-2xl text-gray-700">{result === 'win' ? '와우! 당신이 이겼어요!' : '아쉬워요! 다음엔 꼭!'}</p>
+             <div className="my-5 sm:my-6 p-4 bg-gray-50 rounded-3xl">
+                <p className="text-xs sm:text-sm text-gray-400 uppercase tracking-tighter">Final Floor</p>
+                <p className="text-4xl sm:text-5xl text-pink-500 font-bold">{floor}층</p>
              </div>
              
              {isPractice ? (
                <div className="flex flex-col gap-3">
-                 <button onClick={resetPracticeGame} className="w-full bg-green-500 text-white font-bold py-4 rounded-2xl shadow-[0_6px_0_#2e7d32] text-xl active:translate-y-1 active:shadow-none transition-all">다시하기 🔄</button>
-                 <button onClick={() => onFinish(floor, false)} className="w-full bg-gray-400 text-white font-bold py-3 rounded-2xl shadow-[0_6px_0_#666] text-lg active:translate-y-1 active:shadow-none transition-all">나가기 🏠</button>
+                 <button onClick={resetPracticeGame} className="w-full bg-green-500 text-white font-bold py-3 sm:py-4 rounded-2xl shadow-[0_6px_0_#2e7d32] text-xl active:translate-y-1 active:shadow-none transition-all">다시하기 🔄</button>
+                 <button onClick={() => onFinish(floor, false)} className="w-full bg-gray-400 text-white font-bold py-2 sm:py-3 rounded-2xl shadow-[0_6px_0_#666] text-lg active:translate-y-1 active:shadow-none transition-all">나가기 🏠</button>
                </div>
              ) : (
                <button 
                   onClick={() => onFinish(floor, result === 'win')} 
-                  className="w-full bg-pink-500 hover:bg-pink-600 text-white font-bold py-4 rounded-2xl shadow-[0_6px_0_#d63384] border-2 border-white/20 text-xl active:translate-y-1 active:shadow-none transition-all"
+                  className="w-full bg-pink-500 hover:bg-pink-600 text-white font-bold py-3 sm:py-4 rounded-2xl shadow-[0_6px_0_#d63384] border-2 border-white/20 text-xl active:translate-y-1 active:shadow-none transition-all"
                >
                   로비로 돌아가기 🏠
                </button>
@@ -321,7 +331,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
             return (
               <div 
                 key={`stair-${stairIndex}`}
-                className="absolute w-36 h-10 bg-[#e74c3c] border-b-[6px] border-[#c0392b] border-r-4 border-l-4 border-white/20 rounded-sm shadow-lg z-10"
+                className="absolute w-32 sm:w-36 h-10 bg-[#e74c3c] border-b-[6px] border-[#c0392b] border-r-4 border-l-4 border-white/20 rounded-sm shadow-lg z-10"
                 style={{
                   bottom: `${stairIndex * 40}px`,
                   left: `${x}px`,
@@ -342,8 +352,8 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
                 className="absolute z-20 transition-all duration-300"
                 style={{ bottom: `${data.floor * 40 + 40}px`, left: `${x}px`, transform: `translateX(-50%)` }}
               >
-                <CharacterSprite type={data.charId} facing={data.facing} isMoving={false} size={70} opacity={0.5} customImageUrl={data.customImageUrl} />
-                <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-black/50 text-white text-[10px] px-2 py-0.5 rounded-full backdrop-blur-sm whitespace-nowrap">{data.name}</div>
+                <CharacterSprite type={data.charId} facing={data.facing} isMoving={false} size={60} opacity={0.5} customImageUrl={data.customImageUrl} />
+                <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-black/50 text-white text-[8px] sm:text-[10px] px-2 py-0.5 rounded-full backdrop-blur-sm whitespace-nowrap">{data.name}</div>
               </div>
             );
           })}
@@ -352,20 +362,20 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
             className="absolute z-30 transition-transform duration-100"
             style={{ bottom: `${floor * 40 + 40}px`, left: `${currentPlayerX}px`, transform: `translateX(-50%)` }}
           >
-            <CharacterSprite type={characterId} facing={facing} isMoving={isMoving} size={90} customImageUrl={customImageUrl} />
+            <CharacterSprite type={characterId} facing={facing} isMoving={isMoving} size={80} customImageUrl={customImageUrl} />
           </div>
         </div>
       </div>
 
-      <div className="w-full bg-white/95 backdrop-blur-md p-6 sm:p-8 border-t-8 border-gray-100 z-40">
-        <div className="max-w-md mx-auto flex justify-between gap-6 h-36">
-          <button onPointerDown={(e) => { e.preventDefault(); handleStep('turn'); }} className="flex-1 bg-[#ff5e57] hover:bg-[#ff3f34] shadow-[0_10px_0_#d63031] active:scale-95 transition-all text-white rounded-[32px] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/30 group">
-            <span className="text-5xl mb-1 group-active:rotate-180 transition-transform duration-300">🔄</span>
-            <span className="font-bold text-xl uppercase tracking-tighter">TURN</span>
+      <div className="w-full bg-white/95 backdrop-blur-md p-4 sm:p-8 border-t-8 border-gray-100 z-40">
+        <div className="max-w-md mx-auto flex justify-between gap-4 sm:gap-6 h-28 sm:h-36">
+          <button onPointerDown={(e) => { e.preventDefault(); handleStep('turn'); }} className="flex-1 bg-[#ff5e57] hover:bg-[#ff3f34] shadow-[0_10px_0_#d63031] active:scale-95 transition-all text-white rounded-[24px] sm:rounded-[32px] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/30 group">
+            <span className="text-4xl sm:text-5xl mb-1 group-active:rotate-180 transition-transform duration-300">🔄</span>
+            <span className="font-bold text-base sm:text-xl uppercase tracking-tighter">TURN</span>
           </button>
-          <button onPointerDown={(e) => { e.preventDefault(); handleStep('up'); }} className="flex-1 bg-[#3fb6ff] hover:bg-[#0984e3] shadow-[0_10px_0_#0652dd] active:scale-95 transition-all text-white rounded-[32px] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/30 group">
-            <span className="text-5xl mb-1 group-active:scale-125 transition-transform duration-150">👣</span>
-            <span className="font-bold text-xl uppercase tracking-tighter">CLIMB</span>
+          <button onPointerDown={(e) => { e.preventDefault(); handleStep('up'); }} className="flex-1 bg-[#3fb6ff] hover:bg-[#0984e3] shadow-[0_10px_0_#0652dd] active:scale-95 transition-all text-white rounded-[24px] sm:rounded-[32px] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/30 group">
+            <span className="text-4xl sm:text-5xl mb-1 group-active:scale-125 transition-transform duration-150">👣</span>
+            <span className="font-bold text-base sm:text-xl uppercase tracking-tighter">CLIMB</span>
           </button>
         </div>
       </div>
