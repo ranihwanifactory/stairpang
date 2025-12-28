@@ -241,7 +241,23 @@ const App: React.FC = () => {
         alert('최소 2명이 필요해요! 친구를 초대하세요.');
         return;
       }
-      await update(ref(rtdb, `rooms/${currentRoomId}`), { status: 'playing' });
+
+      // 방장이 모든 플레이어가 공유할 동일한 계단 배열 생성
+      const startDir = 1;
+      const sequence = [startDir, startDir];
+      let currentX = startDir;
+      for (let i = 2; i < 1000; i++) {
+        const change = Math.random() > 0.7;
+        if (change) {
+          currentX = currentX === 1 ? 0 : 1;
+        }
+        sequence.push(currentX);
+      }
+
+      await update(ref(rtdb, `rooms/${currentRoomId}`), { 
+        status: 'playing',
+        stairSequence: sequence
+      });
     }
   };
 
@@ -295,7 +311,8 @@ const App: React.FC = () => {
         });
         await update(ref(rtdb, `rooms/${currentRoomId}`), { 
           status: 'waiting',
-          players: resetPlayers
+          players: resetPlayers,
+          stairSequence: null // 다음 게임을 위해 계단 초기화
         });
       }, 3000);
     }
@@ -309,6 +326,7 @@ const App: React.FC = () => {
       characterId={profile.selectedCharacter} 
       onFinish={handleGameFinish} 
       customImageUrl={profile.customCharacterURL}
+      stairSequence={room?.stairSequence}
     />;
   }
 

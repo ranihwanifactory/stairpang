@@ -10,7 +10,8 @@ interface GameProps {
   uid: string;
   characterId: string;
   onFinish: (score: number) => void;
-  customImageUrl?: string; // 추가
+  customImageUrl?: string;
+  stairSequence?: number[]; // 공유 계단 시퀀스 주입
 }
 
 interface OpponentData {
@@ -18,10 +19,10 @@ interface OpponentData {
   charId: string;
   name: string;
   facing: number;
-  customImageUrl?: string; // 추가
+  customImageUrl?: string;
 }
 
-export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, customImageUrl }) => {
+export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, customImageUrl, stairSequence }) => {
   const isPractice = roomId === 'practice';
   const [floor, setFloor] = useState(0);
   const [facing, setFacing] = useState(1);
@@ -40,6 +41,13 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
   const movingTimeoutRef = useRef<number>();
 
   const generateStairs = useCallback(() => {
+    // 실시간 대결이고 서버에서 계단 정보가 왔다면 그것을 사용
+    if (!isPractice && stairSequence) {
+      setStairs(stairSequence);
+      return;
+    }
+
+    // 연습하기 혹은 서버 데이터 지연 시 로컬에서 생성
     const startDir = 1;
     const newStairs = [startDir, startDir]; 
     let currentX = startDir;
@@ -51,7 +59,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
       newStairs.push(currentX);
     }
     setStairs(newStairs);
-  }, []);
+  }, [isPractice, stairSequence]);
 
   const resetGame = useCallback(() => {
     floorRef.current = 0;
@@ -84,8 +92,8 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
 
     let listener: any = null;
     if (!isPractice) {
-      const roomRef = ref(rtdb, `rooms/${roomId}/players`);
-      listener = onValue(roomRef, (snapshot) => {
+      const roomPlayersRef = ref(rtdb, `rooms/${roomId}/players`);
+      listener = onValue(roomPlayersRef, (snapshot) => {
         const players = snapshot.val();
         const opps: Record<string, OpponentData> = {};
         if (players) {
@@ -96,7 +104,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
                 charId: players[pId].characterId || 'rabbit',
                 name: players[pId].displayName || '친구',
                 facing: players[pId].facing || 1,
-                customImageUrl: players[pId].customCharacterURL // 상대방의 커스텀 사진
+                customImageUrl: players[pId].customCharacterURL 
               };
             }
           });
@@ -119,8 +127,8 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
 
     return () => {
       if (!isPractice && listener) {
-        const roomRef = ref(rtdb, `rooms/${roomId}/players`);
-        off(roomRef, 'value', listener);
+        const roomPlayersRef = ref(rtdb, `rooms/${roomId}/players`);
+        off(roomPlayersRef, 'value', listener);
       }
       clearInterval(cdInterval);
       if (timerRef.current) clearInterval(timerRef.current);
@@ -241,7 +249,6 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
            <div className={`${isPractice ? 'bg-green-600' : 'bg-pink-500'} text-white px-4 py-1 rounded-full text-sm font-bold shadow-md border-2 border-white/30`}>
              {isPractice ? '열심히 연습 중! 🌱' : '실시간 대결 중! 🏁'}
            </div>
-           {/* Fix: Explicitly type data as OpponentData to avoid 'unknown' errors */}
            {!isPractice && Object.entries(opponentFloors).map(([id, data]: [string, OpponentData]) => (
              <div key={id} className="bg-white/90 px-3 py-1 rounded-lg text-xs font-bold border-2 border-pink-200 flex items-center gap-2 animate-bounce">
                <span className="w-5 h-5 flex items-center justify-center">
@@ -263,7 +270,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
 
       {isDead && (
         <div className="absolute inset-0 z-50 bg-red-600/30 backdrop-blur-md flex flex-col items-center justify-center p-4">
-           <div className="bg-white p-6 sm:p-8 rounded-[40px] shadow-2xl border-8 border-red-500 text-center animate-bounce w-full max-w-sm">
+           <div className="bg-white p-6 sm:p-8 rounded-[40px] shadow-2xl border-8 border-red-500 text-center animate-bounce w-full max-sm">
              <h2 className="text-5xl sm:text-6xl text-red-500 mb-2">으악! 😵</h2>
              <p className="text-xl sm:text-2xl text-gray-700">{isPractice ? '연습이 끝났어요!' : '발을 헛디뎠어요!'}</p>
              <p className={`text-4xl sm:text-5xl ${isPractice ? 'text-green-500' : 'text-pink-500'} mt-3 mb-6 font-bold`}>{floor}층 도달!</p>
@@ -305,7 +312,6 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
             );
           })}
 
-          {/* Fix: Explicitly type data as OpponentData to avoid 'unknown' errors */}
           {!isPractice && Object.entries(opponentFloors).map(([id, data]: [string, OpponentData]) => {
             const x = getStairX(data.floor);
             return (

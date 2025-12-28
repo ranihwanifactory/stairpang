@@ -17,6 +17,7 @@ export interface Room {
   hostName: string;
   status: 'waiting' | 'playing' | 'finished';
   players: Record<string, PlayerState>;
+  stairSequence?: number[]; // 모든 플레이어가 공유할 계단 배열 (0: 왼쪽, 1: 오른쪽)
   createdAt: number;
 }
 
@@ -24,12 +25,12 @@ export interface PlayerState {
   uid: string;
   displayName: string;
   photoURL: string;
-  characterId: string; // character -> characterId 로 통일
+  characterId: string; 
   currentFloor: number;
   isReady: boolean;
   isFinished: boolean;
   facing?: number;
-  customCharacterURL?: string; // 실시간 대결을 위한 커스텀 이미지 전달용
+  customCharacterURL?: string; 
 }
 
 export const CHARACTERS = [
