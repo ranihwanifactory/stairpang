@@ -2,8 +2,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { auth, db, rtdb } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { doc, getDoc, updateDoc, collection, query, orderBy, limit, onSnapshot, increment } from 'firebase/firestore';
-import { ref, set, push, onValue, remove, update, off } from 'firebase/database';
+// Fix: Added missing setDoc to the imports from firebase/firestore
+import { doc, getDoc, setDoc, updateDoc, collection, query, orderBy, limit, onSnapshot, increment } from 'firebase/firestore';
+import { ref, set, push, onValue, remove, update, off, get } from 'firebase/database';
 import { Auth } from './components/Auth';
 import { Game } from './components/Game';
 import { UserProfile, Room, PlayerState, CHARACTERS } from './types';
@@ -32,20 +33,26 @@ const App: React.FC = () => {
     const unsubAuth = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (u) {
-        const docSnap = await getDoc(doc(db, 'users', u.uid));
-        if (docSnap.exists()) {
-          const data = docSnap.data() as UserProfile;
-          setProfile({ ...data, uid: u.uid });
-        } else {
-          setProfile({
-            uid: u.uid,
-            displayName: u.displayName || '익명 친구',
-            email: u.email || '',
-            photoURL: u.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.uid}`,
-            winCount: 0,
-            totalGames: 0,
-            selectedCharacter: 'rabbit'
-          });
+        try {
+          const docSnap = await getDoc(doc(db, 'users', u.uid));
+          if (docSnap.exists()) {
+            const data = docSnap.data() as UserProfile;
+            setProfile({ ...data, uid: u.uid });
+          } else {
+            const newProfile = {
+              uid: u.uid,
+              displayName: u.displayName || '익명 친구',
+              email: u.email || '',
+              photoURL: u.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${u.uid}`,
+              winCount: 0,
+              totalGames: 0,
+              selectedCharacter: 'rabbit'
+            };
+            await setDoc(doc(db, 'users', u.uid), newProfile);
+            setProfile(newProfile);
+          }
+        } catch (e) {
+          console.error("Profile fetch error:", e);
         }
       } else {
         setProfile(null);
@@ -87,6 +94,7 @@ const App: React.FC = () => {
     } else {
       setCurrentRoomId(null);
       setView('lobby');
+      setRoom(null);
     }
   }, []);
 
@@ -99,12 +107,15 @@ const App: React.FC = () => {
   useEffect(() => {
     if (currentRoomId) {
       const roomRef = ref(rtdb, `rooms/${currentRoomId}`);
+      let firstLoad = true;
       const listener = onValue(roomRef, (snapshot) => {
         const data = snapshot.val();
         if (data) {
           setRoom(data);
           setInGame(data.status === 'playing');
-        } else {
+          firstLoad = false;
+        } else if (!firstLoad) {
+          // 데이터가 있다가 없어진 경우에만 퇴장 처리 (생성 직후 찰나의 null 방지)
           setRoom(null);
           setCurrentRoomId(null);
           window.location.hash = '';
@@ -166,7 +177,7 @@ const App: React.FC = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
       if (videoRef.current) videoRef.current.srcObject = stream;
     } catch (err) {
-      alert('카메라 실패!');
+      alert('카메라를 사용할 수 없습니다. 권한 설정을 확인해주세요!');
       setIsCameraOpen(false);
     }
   };
@@ -202,10 +213,12 @@ const App: React.FC = () => {
     setIsProcessing(true);
     try {
       const myUid = currentUser.uid;
-      const newRoomRef = push(ref(rtdb, 'rooms'));
+      const roomsListRef = ref(rtdb, 'rooms');
+      const newRoomRef = push(roomsListRef);
       const roomId = newRoomRef.key;
       const shortCode = Math.floor(1000 + Math.random() * 9000).toString();
-      await set(newRoomRef, {
+      
+      const roomData = {
         id: roomId,
         shortCode,
         hostId: myUid,
@@ -224,10 +237,16 @@ const App: React.FC = () => {
             isFinished: false
           }
         }
-      });
+      };
+
+      // 데이터 저장 완료를 확실히 기다림
+      await set(newRoomRef, roomData);
+      
+      // 저장 후 해시 변경 (setCurrentRoomId를 트리거함)
       window.location.hash = roomId || '';
-    } catch (e) {
-      alert('방 생성 실패!');
+    } catch (e: any) {
+      console.error("Room create error:", e);
+      alert('방을 만들지 못했습니다. 인터넷 연결을 확인해주세요! 😭');
     } finally {
       setIsProcessing(false);
     }
@@ -244,34 +263,63 @@ const App: React.FC = () => {
     setIsProcessing(true);
     try {
       const myUid = currentUser.uid;
-      await update(ref(rtdb, `rooms/${roomId}/players`), { 
-        [myUid]: {
-          uid: myUid,
-          displayName: profile.displayName || '익명',
-          photoURL: profile.photoURL,
-          characterId: profile.selectedCharacter,
-          customCharacterURL: profile.customCharacterURL || null,
-          currentFloor: 0,
-          isReady: false,
-          isFinished: false
-        }
+      const playerRef = ref(rtdb, `rooms/${roomId}/players/${myUid}`);
+      
+      // 방이 존재하는지 먼저 확인
+      const roomSnap = await get(ref(rtdb, `rooms/${roomId}`));
+      if (!roomSnap.exists()) {
+        alert('이미 사라진 방인 것 같아요! 💨');
+        return;
+      }
+
+      await set(playerRef, {
+        uid: myUid,
+        displayName: profile.displayName || '익명',
+        photoURL: profile.photoURL,
+        characterId: profile.selectedCharacter,
+        customCharacterURL: profile.customCharacterURL || null,
+        currentFloor: 0,
+        isReady: false,
+        isFinished: false
       });
+      
       window.location.hash = roomId;
-    } catch (e) {
-      alert('입장 실패!');
+    } catch (e: any) {
+      console.error("Join room error:", e);
+      alert('방에 들어가지 못했습니다. 다시 시도해주세요! ⚠️');
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const handleJoinByCode = (e: React.FormEvent) => {
+  const handleJoinByCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    const targetRoom = availableRooms.find(r => r.shortCode === inputCode);
-    if (targetRoom) {
-      joinRoom(targetRoom.id);
-      setInputCode('');
-    } else {
-      alert('방 번호 확인!');
+    if (inputCode.length !== 4) return;
+    
+    setIsProcessing(true);
+    try {
+      // 최신 방 목록을 직접 조회 (동기화 지연 방지)
+      const roomsSnap = await get(ref(rtdb, 'rooms'));
+      const roomsData = roomsSnap.val();
+      
+      if (roomsData) {
+        const targetEntry = Object.entries(roomsData).find(
+          ([_, r]: [string, any]) => r && r.shortCode === inputCode && r.status === 'waiting'
+        );
+        
+        if (targetEntry) {
+          joinRoom(targetEntry[0]);
+          setInputCode('');
+        } else {
+          alert('방 번호를 찾을 수 없거나 이미 시작된 게임이에요! 🔍');
+        }
+      } else {
+        alert('현재 대기 중인 방이 없습니다. 직접 방을 만들어보세요!');
+      }
+    } catch (e) {
+      console.error("Join by code error:", e);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -298,7 +346,7 @@ const App: React.FC = () => {
   const startGame = async () => {
     if (currentRoomId && room) {
       if (Object.keys(room.players).length < 2) {
-        alert('최소 2명이 필요해요!');
+        alert('최소 2명이 필요해요! 친구를 초대해보세요.');
         return;
       }
       const startDir = 1;
@@ -344,13 +392,11 @@ const App: React.FC = () => {
 
     if (!room || !currentRoomId) return;
 
-    // 승패 데이터 업데이트
     await updateDoc(doc(db, 'users', currentUser.uid), {
       totalGames: increment(1),
       winCount: isWinner ? increment(1) : increment(0)
     });
 
-    // 방장이 방을 다시 대기 상태로 초기화 (잠시 후)
     if (room.hostId === currentUser.uid) {
       setTimeout(async () => {
         const resetPlayers: Record<string, any> = {};
@@ -457,20 +503,20 @@ const App: React.FC = () => {
             </section>
 
             <div className="grid grid-cols-2 gap-4">
-              <button onClick={createRoom} className="bg-pink-500 hover:bg-pink-600 text-white text-xl font-bold py-6 rounded-3xl shadow-lg border-b-4 border-pink-700">방 만들기</button>
-              <button onClick={startPractice} className="bg-green-500 hover:bg-green-600 text-white text-xl font-bold py-6 rounded-3xl shadow-lg border-b-4 border-green-700">혼자 연습</button>
+              <button disabled={isProcessing} onClick={createRoom} className="bg-pink-500 hover:bg-pink-600 disabled:bg-pink-200 text-white text-xl font-bold py-6 rounded-3xl shadow-lg border-b-4 border-pink-700 active:translate-y-1 active:border-b-0 transition-all">방 만들기</button>
+              <button onClick={startPractice} className="bg-green-500 hover:bg-green-600 text-white text-xl font-bold py-6 rounded-3xl shadow-lg border-b-4 border-green-700 active:translate-y-1 active:border-b-0 transition-all">혼자 연습</button>
             </div>
 
             <section className="bg-yellow-100 p-6 rounded-3xl shadow-lg border-2 border-yellow-200">
                <h3 className="text-center font-bold text-yellow-700 mb-3">🔢 친구 방 번호로 입장!</h3>
                <form onSubmit={handleJoinByCode} className="flex gap-2">
                  <input 
-                   type="text" maxLength={4} placeholder="번호 4자리"
+                   type="text" inputMode="numeric" maxLength={4} placeholder="번호 4자리"
                    className="flex-1 p-4 rounded-2xl border-2 border-yellow-300 text-center text-2xl font-bold text-yellow-700 focus:outline-none"
                    value={inputCode}
                    onChange={(e) => setInputCode(e.target.value.replace(/[^0-9]/g, ''))}
                  />
-                 <button className="bg-yellow-500 text-white px-6 py-2 rounded-2xl font-bold">입장</button>
+                 <button disabled={isProcessing} className="bg-yellow-500 disabled:bg-yellow-200 text-white px-6 py-2 rounded-2xl font-bold">입장</button>
                </form>
             </section>
 
@@ -478,7 +524,7 @@ const App: React.FC = () => {
               <h3 className="font-bold text-lg mb-3 text-sky-600">☁️ 현재 대기 중인 방</h3>
               <div className="space-y-3">
                 {availableRooms.length === 0 ? (
-                  <div className="py-10 text-center text-gray-300 font-bold bg-gray-50 rounded-3xl border-2 border-dashed border-gray-100">방을 만들어보세요!</div>
+                  <div className="py-10 text-center text-gray-300 font-bold bg-gray-50 rounded-3xl border-2 border-dashed border-gray-100">현재 대기중인 방이 없어요.</div>
                 ) : (
                   availableRooms.map(r => (
                     <div key={r.id} className="flex items-center justify-between p-4 rounded-2xl bg-sky-50 border border-sky-100">
@@ -525,7 +571,7 @@ const App: React.FC = () => {
               ) : (
                 <div className="p-5 bg-sky-50 rounded-2xl text-sky-500 font-bold animate-pulse">방장이 시작하길 기다리고 있어요...</div>
               )}
-              <button onClick={leaveRoom} className="w-full py-2 text-gray-400 font-bold">나가기</button>
+              <button onClick={leaveRoom} className="w-full py-2 text-gray-400 font-bold hover:text-gray-600 transition">나가기</button>
             </div>
           </div>
         )}
@@ -540,7 +586,7 @@ const App: React.FC = () => {
                   <div key={r.uid} className="flex items-center justify-between p-4 rounded-2xl bg-pink-50/30 border border-pink-100">
                     <div className="flex items-center gap-4">
                       <span className={`text-xl font-bold w-10 h-10 flex items-center justify-center rounded-full ${i === 0 ? 'bg-yellow-400 text-white' : 'bg-white text-pink-300'}`}>{i + 1}</span>
-                      <img src={r.customCharacterURL || r.photoURL} className="w-12 h-12 rounded-full border-2 border-white object-cover" alt="" />
+                      <img src={r.customCharacterURL || r.photoURL} className="w-12 h-12 rounded-full border-2 border-white object-cover bg-white" alt="" />
                       <span className="font-bold text-gray-700">{r.displayName}</span>
                     </div>
                     <span className="text-pink-500 font-bold text-xl">{r.winCount}승</span>
