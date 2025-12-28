@@ -27,7 +27,19 @@ const App: React.FC = () => {
       if (u) {
         const docSnap = await getDoc(doc(db, 'users', u.uid));
         if (docSnap.exists()) {
-          setProfile(docSnap.data() as UserProfile);
+          const data = docSnap.data() as UserProfile;
+          setProfile({ ...data, uid: u.uid }); // Ensure uid is present
+        } else {
+          // If profile doesn't exist yet, create a temporary one to avoid crashes
+          setProfile({
+            uid: u.uid,
+            displayName: u.displayName || '익명 친구',
+            email: u.email || '',
+            photoURL: u.photoURL || '',
+            winCount: 0,
+            totalGames: 0,
+            selectedCharacter: 'rabbit'
+          });
         }
       } else {
         setProfile(null);
@@ -46,7 +58,7 @@ const App: React.FC = () => {
       const data = snapshot.val();
       if (data) {
         const waitingRooms = Object.values(data)
-          .filter((r: any) => r.status === 'waiting')
+          .filter((r: any) => r && r.status === 'waiting')
           .map((r: any) => r as Room);
         setAvailableRooms(waitingRooms);
       } else {
@@ -91,10 +103,8 @@ const App: React.FC = () => {
             setInGame(true);
           } else {
             setInGame(false);
-            if (view !== 'room') setView('room');
           }
         } else {
-          // Room deleted or not found
           setRoom(null);
           setCurrentRoomId(null);
           window.location.hash = '';
@@ -103,25 +113,27 @@ const App: React.FC = () => {
       });
       return () => off(roomRef, 'value', listener);
     }
-  }, [currentRoomId, view]);
+  }, [currentRoomId]);
 
   const createRoom = async () => {
-    if (!profile || isProcessing) return;
+    if (!user || !profile || isProcessing) return;
     setIsProcessing(true);
     try {
       const newRoomRef = push(ref(rtdb, 'rooms'));
       const roomId = newRoomRef.key!;
-      const roomData: Room = {
+      const myUid = user.uid; // Use auth uid directly to avoid undefined
+      
+      const roomData = {
         id: roomId,
-        hostId: profile.uid,
-        hostName: profile.displayName,
+        hostId: myUid,
+        hostName: profile.displayName || '익명',
         status: 'waiting',
         createdAt: Date.now(),
         players: {
-          [profile.uid]: {
-            uid: profile.uid,
-            displayName: profile.displayName,
-            photoURL: profile.photoURL,
+          [myUid]: {
+            uid: myUid,
+            displayName: profile.displayName || '익명',
+            photoURL: profile.photoURL || '',
             character: CHARACTERS.find(c => c.id === profile.selectedCharacter)?.emoji || '🐰',
             currentFloor: 0,
             isReady: false,
@@ -131,49 +143,50 @@ const App: React.FC = () => {
       };
       await set(newRoomRef, roomData);
       window.location.hash = roomId;
-    } catch (e) {
-      console.error(e);
-      alert('방을 만들지 못했어요. 다시 시도해주세요.');
+    } catch (e: any) {
+      console.error('Room Creation Error:', e);
+      alert('방을 만들지 못했어요: ' + e.message);
     } finally {
       setIsProcessing(false);
     }
   };
 
   const joinRoom = async (roomId: string) => {
-    if (!profile || isProcessing) return;
+    if (!user || !profile || isProcessing) return;
     setIsProcessing(true);
     try {
+      const myUid = user.uid;
       const player: PlayerState = {
-        uid: profile.uid,
-        displayName: profile.displayName,
-        photoURL: profile.photoURL,
+        uid: myUid,
+        displayName: profile.displayName || '익명',
+        photoURL: profile.photoURL || '',
         character: CHARACTERS.find(c => c.id === profile.selectedCharacter)?.emoji || '🐰',
         currentFloor: 0,
         isReady: false,
         isFinished: false
       };
       await update(ref(rtdb, `rooms/${roomId}/players`), {
-        [profile.uid]: player
+        [myUid]: player
       });
       window.location.hash = roomId;
-    } catch (e) {
-      console.error(e);
-      alert('방에 들어가지 못했어요.');
+    } catch (e: any) {
+      console.error('Join Room Error:', e);
+      alert('방에 입장할 수 없어요.');
     } finally {
       setIsProcessing(false);
     }
   };
 
   const leaveRoom = async () => {
-    if (!currentRoomId || !profile || isProcessing) return;
+    if (!currentRoomId || !user || isProcessing) return;
     setIsProcessing(true);
     try {
+      const myUid = user.uid;
       const roomPlayers = room?.players || {};
       if (Object.keys(roomPlayers).length <= 1) {
         await remove(ref(rtdb, `rooms/${currentRoomId}`));
       } else {
-        await remove(ref(rtdb, `rooms/${currentRoomId}/players/${profile.uid}`));
-        // If host leaves, reassign host could be added here, but for simplicity we keep it this way
+        await remove(ref(rtdb, `rooms/${currentRoomId}/players/${myUid}`));
       }
       window.location.hash = '';
     } catch (e) {
@@ -187,7 +200,7 @@ const App: React.FC = () => {
     if (currentRoomId && room) {
       const playerCount = Object.keys(room.players).length;
       if (playerCount < 2) {
-        alert('대결을 하려면 친구가 최소 1명 더 있어야 해요! 🤜🤛');
+        alert('혼자서는 대결할 수 없어요! 친구를 초대해주세요. 🤜🤛');
         return;
       }
       await update(ref(rtdb, `rooms/${currentRoomId}`), { status: 'playing' });
@@ -195,31 +208,29 @@ const App: React.FC = () => {
   };
 
   const selectCharacter = async (charId: string) => {
-    if (!profile) return;
+    if (!profile || !user) return;
     const newProfile = { ...profile, selectedCharacter: charId };
     setProfile(newProfile);
-    await updateDoc(doc(db, 'users', profile.uid), { selectedCharacter: charId });
+    await updateDoc(doc(db, 'users', user.uid), { selectedCharacter: charId });
     
     if (currentRoomId) {
       const emoji = CHARACTERS.find(c => c.id === charId)?.emoji || '🐰';
-      await update(ref(rtdb, `rooms/${currentRoomId}/players/${profile.uid}`), { character: emoji });
+      await update(ref(rtdb, `rooms/${currentRoomId}/players/${user.uid}`), { character: emoji });
     }
   };
 
   const handleGameFinish = async (score: number) => {
-    if (!profile || !room || !currentRoomId) return;
+    if (!user || !profile || !room || !currentRoomId) return;
     
     setInGame(false);
     playSound('win');
     
-    // Update personal stats in Firestore
-    await updateDoc(doc(db, 'users', profile.uid), {
+    await updateDoc(doc(db, 'users', user.uid), {
       totalGames: profile.totalGames + 1,
-      winCount: score > 30 ? profile.winCount + 1 : profile.winCount // 30층 이상 시 승점 부여
+      winCount: score > 30 ? profile.winCount + 1 : profile.winCount
     });
     
-    // Reset room state for next match after delay
-    if (room.hostId === profile.uid) {
+    if (room.hostId === user.uid) {
       setTimeout(async () => {
         const resetPlayers: Record<string, any> = {};
         Object.keys(room.players).forEach(pid => {
@@ -242,7 +253,7 @@ const App: React.FC = () => {
 
   if (inGame && room && profile) {
     const myChar = CHARACTERS.find(c => c.id === profile.selectedCharacter)?.emoji || '🐰';
-    return <Game roomId={room.id} uid={profile.uid} character={myChar} onFinish={handleGameFinish} />;
+    return <Game roomId={room.id} uid={user.uid} character={myChar} onFinish={handleGameFinish} />;
   }
 
   return (
@@ -365,7 +376,7 @@ const App: React.FC = () => {
                   <span>🔗</span> 초대 링크 복사하기
                 </button>
 
-                {room.hostId === profile?.uid ? (
+                {room.hostId === user?.uid ? (
                   <div className="space-y-2">
                     <button 
                       onClick={startGame}
