@@ -292,27 +292,6 @@ const App: React.FC = () => {
       <main className="max-w-md mx-auto p-4 space-y-4 sm:space-y-6">
         {view === 'lobby' && (
           <>
-            <section className="bg-yellow-100 p-4 sm:p-6 rounded-3xl shadow-lg border-2 border-yellow-200">
-               <h3 className="text-center font-bold text-yellow-700 mb-3 text-sm sm:text-base flex items-center justify-center gap-2">
-                 <span className="text-xl">🔢</span> 친구 방 번호로 입장!
-               </h3>
-               <form onSubmit={handleJoinByCode} className="flex gap-2">
-                 <input 
-                   type="text" 
-                   inputMode="numeric"
-                   pattern="[0-9]*"
-                   maxLength={4} 
-                   placeholder="번호 4자리"
-                   className="flex-1 p-3 sm:p-4 rounded-2xl border-2 border-yellow-300 text-center text-xl sm:text-2xl font-bold text-yellow-700 focus:outline-none focus:ring-4 focus:ring-yellow-200 placeholder:text-yellow-300 placeholder:text-base"
-                   value={inputCode}
-                   onChange={(e) => setInputCode(e.target.value.replace(/[^0-9]/g, ''))}
-                 />
-                 <button className="bg-yellow-500 text-white px-4 sm:px-6 rounded-2xl font-bold shadow-md hover:bg-yellow-600 active:scale-95 transition text-sm sm:text-base">
-                   입장
-                 </button>
-               </form>
-            </section>
-
             <section className="bg-white p-4 sm:p-6 rounded-3xl shadow-xl border-b-8 border-pink-100 text-center">
               <h2 className="text-lg sm:text-xl font-bold text-gray-800 mb-3">내 캐릭터 바꾸기</h2>
               <div className="grid grid-cols-4 gap-2 sm:gap-3">
@@ -339,6 +318,28 @@ const App: React.FC = () => {
               </button>
             </div>
 
+            {/* 방 번호로 입장 섹션: 위치 이동 및 모바일 최적화 */}
+            <section className="bg-yellow-100 p-4 sm:p-6 rounded-3xl shadow-lg border-2 border-yellow-200">
+               <h3 className="text-center font-bold text-yellow-700 mb-3 text-sm sm:text-base flex items-center justify-center gap-2">
+                 <span className="text-xl">🔢</span> 친구 방 번호로 입장!
+               </h3>
+               <form onSubmit={handleJoinByCode} className="flex gap-2 w-full">
+                 <input 
+                   type="text" 
+                   inputMode="numeric"
+                   pattern="[0-9]*"
+                   maxLength={4} 
+                   placeholder="번호 4자리"
+                   className="flex-1 min-w-0 p-3 sm:p-4 rounded-2xl border-2 border-yellow-300 text-center text-xl sm:text-2xl font-bold text-yellow-700 focus:outline-none focus:ring-4 focus:ring-yellow-200 placeholder:text-yellow-300 placeholder:text-sm sm:placeholder:text-base"
+                   value={inputCode}
+                   onChange={(e) => setInputCode(e.target.value.replace(/[^0-9]/g, ''))}
+                 />
+                 <button className="bg-yellow-500 text-white px-4 sm:px-6 py-2 rounded-2xl font-bold shadow-md hover:bg-yellow-600 active:scale-95 transition text-sm sm:text-lg flex-shrink-0">
+                   입장
+                 </button>
+               </form>
+            </section>
+
             <section className="bg-white p-4 sm:p-6 rounded-3xl shadow-lg border-2 border-sky-100">
               <h3 className="font-bold text-base sm:text-lg mb-3 text-sky-600">☁️ 현재 대기 중인 방</h3>
               <div className="space-y-2 sm:space-y-3">
@@ -346,15 +347,15 @@ const App: React.FC = () => {
                   <div className="py-8 sm:py-10 text-center text-gray-300 font-bold bg-gray-50 rounded-3xl border-2 border-dashed border-gray-100 text-sm sm:text-base">심심해요... 방을 만들어보세요!</div>
                 ) : (
                   availableRooms.map(r => (
-                    <div key={r.id} className="flex items-center justify-between p-4 sm:p-5 rounded-2xl bg-sky-50 border border-sky-100">
-                      <div>
-                        <span className="font-bold text-gray-700 text-base sm:text-lg">{r.hostName}님의 방</span>
-                        <div className="flex gap-1 sm:gap-2 mt-1">
+                    <div key={r.id} className="flex items-center justify-between p-3 sm:p-5 rounded-2xl bg-sky-50 border border-sky-100">
+                      <div className="min-w-0 flex-1 mr-2">
+                        <span className="font-bold text-gray-700 text-sm sm:text-lg truncate block">{r.hostName}님의 방</span>
+                        <div className="flex flex-wrap gap-1 sm:gap-2 mt-1">
                           <span className="bg-white px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] text-sky-400 font-bold border border-sky-100">번호: {r.shortCode}</span>
                           <span className="bg-white px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] text-sky-400 font-bold border border-sky-100">인원: {Object.keys(r.players).length}/4</span>
                         </div>
                       </div>
-                      <button onClick={() => joinRoom(r.id)} className="bg-sky-500 text-white px-4 sm:px-6 py-1.5 sm:py-2 rounded-xl font-bold text-xs sm:text-sm shadow-md">입장!</button>
+                      <button onClick={() => joinRoom(r.id)} className="bg-sky-500 text-white px-3 sm:px-6 py-1.5 sm:py-2 rounded-xl font-bold text-xs sm:text-sm shadow-md flex-shrink-0">입장!</button>
                     </div>
                   ))
                 )}

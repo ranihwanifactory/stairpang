@@ -52,6 +52,33 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
     setStairs(newStairs);
   }, []);
 
+  const resetGame = useCallback(() => {
+    floorRef.current = 0;
+    facingRef.current = 1;
+    lastSyncFloor.current = 0;
+    setFloor(0);
+    setFacing(1);
+    setTimeLeft(30);
+    setIsDead(false);
+    setIsMoving(false);
+    setCountdown(3);
+    setGameActive(false);
+    generateStairs();
+    
+    // 카운트다운 재시작
+    const cdInterval = window.setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(cdInterval);
+          setGameActive(true);
+          playSound('start');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }, [generateStairs]);
+
   useEffect(() => {
     generateStairs();
 
@@ -106,6 +133,11 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
           if (prev <= 0.1) {
             clearInterval(timerRef.current);
             setGameActive(false);
+            if (!isPractice) {
+              gameOver();
+            } else {
+              setIsDead(true);
+            }
             return 0;
           }
           return Math.max(0, prev - 0.1);
@@ -113,14 +145,16 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
       }, 100);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [gameActive, isDead]);
+  }, [gameActive, isDead, isPractice]);
 
   const gameOver = useCallback(() => {
     setIsDead(true);
     setGameActive(false);
     playSound('lose');
-    setTimeout(() => onFinish(floorRef.current), 1500);
-  }, [onFinish]);
+    if (!isPractice) {
+      setTimeout(() => onFinish(floorRef.current), 1500);
+    }
+  }, [onFinish, isPractice]);
 
   const handleStep = useCallback((type: 'up' | 'turn') => {
     if (!gameActive || isDead) return;
@@ -224,11 +258,28 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish }
       )}
 
       {isDead && (
-        <div className="absolute inset-0 z-50 bg-red-600/30 backdrop-blur-md flex flex-col items-center justify-center">
-           <div className="bg-white p-8 rounded-[40px] shadow-2xl border-8 border-red-500 text-center animate-bounce">
-             <h2 className="text-6xl text-red-500 mb-4">으악! 😵</h2>
-             <p className="text-2xl text-gray-700">{isPractice ? '다시 도전해볼까요?' : '발을 헛디뎠어요!'}</p>
-             <p className={`text-5xl ${isPractice ? 'text-green-500' : 'text-pink-500'} mt-4 font-bold`}>{floor}층 도달!</p>
+        <div className="absolute inset-0 z-50 bg-red-600/30 backdrop-blur-md flex flex-col items-center justify-center p-4">
+           <div className="bg-white p-6 sm:p-8 rounded-[40px] shadow-2xl border-8 border-red-500 text-center animate-bounce w-full max-w-sm">
+             <h2 className="text-5xl sm:text-6xl text-red-500 mb-2">으악! 😵</h2>
+             <p className="text-xl sm:text-2xl text-gray-700">{isPractice ? '연습이 끝났어요!' : '발을 헛디뎠어요!'}</p>
+             <p className={`text-4xl sm:text-5xl ${isPractice ? 'text-green-500' : 'text-pink-500'} mt-3 mb-6 font-bold`}>{floor}층 도달!</p>
+             
+             {isPractice && (
+               <div className="flex flex-col gap-3">
+                 <button 
+                   onClick={resetGame}
+                   className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-4 rounded-2xl shadow-[0_6px_0_#2e7d32] border-2 border-white/20 text-xl active:translate-y-1 active:shadow-none transition-all"
+                 >
+                   다시하기 🔄
+                 </button>
+                 <button 
+                   onClick={() => onFinish(floorRef.current)}
+                   className="w-full bg-gray-400 hover:bg-gray-500 text-white font-bold py-3 rounded-2xl shadow-[0_6px_0_#666] border-2 border-white/20 text-lg active:translate-y-1 active:shadow-none transition-all"
+                 >
+                   로비로 나가기 🏠
+                 </button>
+               </div>
+             )}
            </div>
         </div>
       )}
