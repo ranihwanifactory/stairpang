@@ -9,7 +9,7 @@ interface GameProps {
   roomId: string | 'practice';
   uid: string;
   characterId: string;
-  onFinish: (score: number, isWinner: boolean) => void;
+  onFinish: (score: number, isWinner: boolean, action: 'rematch' | 'lobby') => void;
   customImageUrl?: string;
   stairSequence?: number[];
 }
@@ -285,30 +285,34 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
 
       {result && (
         <div className="absolute inset-0 z-[100] bg-black/60 backdrop-blur-lg flex flex-col items-center justify-center p-6">
-           <div className="bg-white p-8 rounded-[40px] shadow-[0_20px_50px_rgba(0,0,0,0.3)] border-[12px] border-pink-100 text-center animate-in zoom-in duration-500 w-full max-w-sm relative">
+           <div className="bg-white p-6 sm:p-8 rounded-[40px] shadow-[0_20px_50px_rgba(0,0,0,0.3)] border-[12px] border-pink-100 text-center animate-in zoom-in duration-500 w-full max-w-sm relative">
              <div className="absolute -top-16 left-1/2 -translate-x-1/2 text-8xl drop-shadow-lg animate-bounce">
                 {result === 'win' ? '👑' : '👻'}
              </div>
-             <h2 className={`text-6xl ${result === 'win' ? 'text-yellow-500' : 'text-gray-500'} mb-4 tracking-tighter`}>
+             <h2 className={`text-4xl sm:text-6xl ${result === 'win' ? 'text-yellow-500' : 'text-gray-500'} mb-4 tracking-tighter`}>
                {result === 'win' ? '위너! 대단해!' : '아고고! 패배...'}
              </h2>
-             <div className={`p-6 rounded-3xl mb-8 ${result === 'win' ? 'bg-yellow-50 border-4 border-yellow-200' : 'bg-gray-50 border-4 border-gray-200'}`}>
-                <p className="text-gray-400 text-sm font-bold uppercase mb-1">최종 기록</p>
-                <p className={`text-6xl font-black ${result === 'win' ? 'text-yellow-600' : 'text-gray-600'}`}>{floor}층</p>
+             <div className={`p-4 sm:p-6 rounded-3xl mb-6 sm:mb-8 ${result === 'win' ? 'bg-yellow-50 border-4 border-yellow-200' : 'bg-gray-50 border-4 border-gray-200'}`}>
+                <p className="text-gray-400 text-[10px] sm:text-sm font-bold uppercase mb-1">최종 기록</p>
+                <p className={`text-5xl sm:text-6xl font-black ${result === 'win' ? 'text-yellow-600' : 'text-gray-600'}`}>{floor}층</p>
              </div>
-             <div className="flex flex-col gap-4">
+             
+             <div className="flex flex-col gap-3">
                {isPractice ? (
-                 <button onClick={resetPracticeGame} className="w-full bg-green-500 text-white font-bold py-5 rounded-[24px] shadow-[0_8px_0_#2e7d32] text-2xl active:translate-y-1 active:shadow-none transition-all">한 번 더 도전! 🔄</button>
+                 <button onClick={resetPracticeGame} className="w-full bg-green-500 text-white font-bold py-4 rounded-[20px] shadow-[0_6px_0_#2e7d32] text-xl active:translate-y-1 active:shadow-none transition-all">한 번 더 도전! 🔄</button>
                ) : (
-                 <div className="bg-sky-50 p-4 rounded-2xl mb-2 text-sky-600 font-bold">
-                   승률이 계산되고 있습니다! 📈
-                 </div>
+                 <button 
+                  onClick={() => onFinish(floor, result === 'win', 'rematch')} 
+                  className="w-full bg-green-500 text-white font-bold py-4 rounded-[20px] shadow-[0_6px_0_#2e7d32] text-xl active:translate-y-1 active:shadow-none transition-all"
+                 >
+                    재대결 하러가기! 🔄
+                 </button>
                )}
                <button 
-                  onClick={() => onFinish(floor, result === 'win')} 
-                  className="w-full bg-pink-500 hover:bg-pink-600 text-white font-bold py-5 rounded-[24px] shadow-[0_8px_0_#d63384] text-2xl active:translate-y-1 active:shadow-none transition-all"
+                  onClick={() => onFinish(floor, result === 'win', 'lobby')} 
+                  className="w-full bg-gray-400 hover:bg-gray-500 text-white font-bold py-4 rounded-[20px] shadow-[0_6px_0_#666] text-xl active:translate-y-1 active:shadow-none transition-all"
                >
-                  로비로 나가기 🏠
+                  그만할래요 (로비로) 🏠
                </button>
              </div>
            </div>
@@ -316,12 +320,10 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
       )}
 
       <div className="flex-1 w-full relative flex items-center justify-center">
-        {/* 플레이어 위치 조정을 위한 translateY 오프셋 추가 (캐릭터를 아래로 내림) */}
         <div 
           className="relative transition-all duration-150 ease-out"
           style={{ transform: `translate(${-currentPlayerX}px, ${floor * 40 + 150}px)` }}
         >
-          {/* 캐릭터가 하단에 있으므로 위쪽으로 더 많은 계단을 렌더링 (45 -> 70) */}
           {Array.from({ length: 70 }).map((_, i) => {
             const stairIndex = floor - 5 + i;
             if (stairIndex < 0) return null;

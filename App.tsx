@@ -135,84 +135,43 @@ const App: React.FC = () => {
     }
   }, [currentRoomId]);
 
-  const processAndSaveImage = async (imageSrc: string) => {
-    if (!user || !profile) return;
+  const leaveRoom = async (isManualExit = true) => {
+    const currentUser = auth.currentUser;
+    // 방 정보가 없는 상태에서 로비 이동만 원할 경우
+    if (!currentRoomId || !currentUser) {
+      window.location.hash = '';
+      setView('lobby');
+      return;
+    }
+
+    // 방장일 경우 확인 절차 (수동 종료 버튼 클릭 시에만)
+    if (isManualExit && room?.hostId === currentUser.uid) {
+      const confirmLeave = window.confirm("방장이 나가면 방이 완전히 사라져요! 정말 나갈까요? 😢");
+      if (!confirmLeave) return;
+    }
+
     setIsProcessing(true);
-    const img = new Image();
-    img.onload = async () => {
-      const canvas = document.createElement('canvas');
-      const size = 128;
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        const minSide = Math.min(img.width, img.height);
-        const startX = (img.width - minSide) / 2;
-        const startY = (img.height - minSide) / 2;
-        ctx.drawImage(img, startX, startY, minSide, minSide, 0, 0, size, size);
-        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
-        await updateDoc(doc(db, 'users', user.uid), {
-          customCharacterURL: compressedBase64,
-          selectedCharacter: 'custom'
-        });
-        setProfile({ ...profile, customCharacterURL: compressedBase64, selectedCharacter: 'custom' });
-        if (currentRoomId) {
-          await update(ref(rtdb, `rooms/${currentRoomId}/players/${user.uid}`), {
-            characterId: 'custom',
-            customCharacterURL: compressedBase64
-          });
-        }
-      }
-      setIsProcessing(false);
-      setShowPhotoOptions(false);
-    };
-    img.src = imageSrc;
-  };
-
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      if (event.target?.result) processAndSaveImage(event.target.result as string);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const openCamera = async () => {
-    setIsCameraOpen(true);
-    setShowPhotoOptions(false);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-      if (videoRef.current) videoRef.current.srcObject = stream;
-    } catch (err) {
-      alert('카메라를 사용할 수 없습니다. 권한 설정을 확인해주세요!');
-      setIsCameraOpen(false);
-    }
-  };
-
-  const closeCamera = () => {
-    if (videoRef.current && videoRef.current.srcObject) {
-      (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
-    }
-    setIsCameraOpen(false);
-  };
-
-  const capturePhoto = () => {
-    if (videoRef.current && canvasRef.current) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const size = Math.min(video.videoWidth, video.videoHeight);
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        const startX = (video.videoWidth - size) / 2;
-        const startY = (video.videoHeight - size) / 2;
-        ctx.drawImage(video, startX, startY, size, size, 0, 0, size, size);
-        processAndSaveImage(canvas.toDataURL('image/jpeg'));
-        closeCamera();
+      const myUid = currentUser.uid;
+      const playersCount = Object.keys(room?.players || {}).length;
+      
+      // 방장이거나 혼자 남은 경우 방 전체 삭제
+      if (room?.hostId === myUid || playersCount <= 1) {
+        await remove(ref(rtdb, `rooms/${currentRoomId}`));
+      } else {
+        // 일반 플레이어는 본인 데이터만 삭제
+        await remove(ref(rtdb, `rooms/${currentRoomId}/players/${myUid}`));
       }
+      
+      // 상태 초기화
+      setCurrentRoomId(null);
+      setRoom(null);
+      window.location.hash = '';
+      setView('lobby');
+    } catch (e) {
+      console.error("Leave error:", e);
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -351,36 +310,6 @@ const App: React.FC = () => {
     }
   };
 
-  const leaveRoom = async () => {
-    const currentUser = auth.currentUser;
-    if (!currentRoomId || !currentUser || isProcessing) return;
-
-    // 방장일 경우 확인 절차 추가
-    if (room?.hostId === currentUser.uid) {
-      const confirmLeave = window.confirm("방장이 나가면 방이 없어져요! 정말 나갈까요? 😢");
-      if (!confirmLeave) return;
-    }
-
-    setIsProcessing(true);
-    try {
-      const myUid = currentUser.uid;
-      const playersCount = Object.keys(room?.players || {}).length;
-      
-      // 방장이거나 혼자 남은 경우 방 전체 삭제
-      if (room?.hostId === myUid || playersCount <= 1) {
-        await remove(ref(rtdb, `rooms/${currentRoomId}`));
-      } else {
-        // 일반 플레이어는 본인 데이터만 삭제
-        await remove(ref(rtdb, `rooms/${currentRoomId}/players/${myUid}`));
-      }
-      window.location.hash = '';
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
   const startGame = async () => {
     if (currentRoomId && room && !isProcessing) {
       if (Object.keys(room.players).length < 2) {
@@ -410,6 +339,55 @@ const App: React.FC = () => {
     }
   };
 
+  const handleGameFinish = async (score: number, isWinner: boolean, action: 'rematch' | 'lobby') => {
+    const currentUser = auth.currentUser;
+    if (!currentUser || !profile) return;
+    
+    setInGame(false);
+    if (isPractice) {
+      setIsPractice(false);
+      return;
+    }
+
+    if (!room || !currentRoomId) return;
+
+    // 점수 업데이트 (비동기)
+    updateDoc(doc(db, 'users', currentUser.uid), {
+      totalGames: increment(1),
+      winCount: isWinner ? increment(1) : increment(0)
+    });
+
+    if (action === 'lobby') {
+      // 로비 선택 시 방에서 즉시 퇴장 (방장은 방 삭제)
+      await leaveRoom(false);
+    } else {
+      // 재대결 선택 시, 방장은 방 상태만 초기화
+      if (room.hostId === currentUser.uid) {
+        try {
+          const resetPlayers: Record<string, any> = {};
+          Object.keys(room.players).forEach(pid => {
+            resetPlayers[pid] = {
+              ...room.players[pid],
+              currentFloor: 0,
+              isReady: false,
+              isFinished: false,
+              facing: 1
+            };
+          });
+          await update(ref(rtdb, `rooms/${currentRoomId}`), { 
+            status: 'waiting',
+            players: resetPlayers,
+            stairSequence: null,
+            winnerId: null,
+            loserId: null
+          });
+        } catch (e) {
+          console.error("Room reset error:", e);
+        }
+      }
+    }
+  };
+
   const selectCharacter = async (charId: string) => {
     if (charId === 'custom') { setShowPhotoOptions(true); return; }
     const currentUser = auth.currentUser;
@@ -425,46 +403,84 @@ const App: React.FC = () => {
     }
   };
 
-  const handleGameFinish = async (score: number, isWinner: boolean) => {
-    const currentUser = auth.currentUser;
-    if (!currentUser || !profile) return;
-    
-    setInGame(false);
-    if (isPractice) {
-      setIsPractice(false);
-      return;
+  // 나머지 함수들은 기존과 동일 (processAndSaveImage, handlePhotoUpload 등)
+  const processAndSaveImage = async (imageSrc: string) => {
+    if (!user || !profile) return;
+    setIsProcessing(true);
+    const img = new Image();
+    img.onload = async () => {
+      const canvas = document.createElement('canvas');
+      const size = 128;
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const minSide = Math.min(img.width, img.height);
+        const startX = (img.width - minSide) / 2;
+        const startY = (img.height - minSide) / 2;
+        ctx.drawImage(img, startX, startY, minSide, minSide, 0, 0, size, size);
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+        await updateDoc(doc(db, 'users', user.uid), {
+          customCharacterURL: compressedBase64,
+          selectedCharacter: 'custom'
+        });
+        setProfile({ ...profile, customCharacterURL: compressedBase64, selectedCharacter: 'custom' });
+        if (currentRoomId) {
+          await update(ref(rtdb, `rooms/${currentRoomId}/players/${user.uid}`), {
+            characterId: 'custom',
+            customCharacterURL: compressedBase64
+          });
+        }
+      }
+      setIsProcessing(false);
+      setShowPhotoOptions(false);
+    };
+    img.src = imageSrc;
+  };
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      if (event.target?.result) processAndSaveImage(event.target.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const openCamera = async () => {
+    setIsCameraOpen(true);
+    setShowPhotoOptions(false);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      if (videoRef.current) videoRef.current.srcObject = stream;
+    } catch (err) {
+      alert('카메라를 사용할 수 없습니다. 권한 설정을 확인해주세요!');
+      setIsCameraOpen(false);
     }
+  };
 
-    if (!room || !currentRoomId) return;
+  const closeCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+    }
+    setIsCameraOpen(false);
+  };
 
-    // 점수 업데이트
-    await updateDoc(doc(db, 'users', currentUser.uid), {
-      totalGames: increment(1),
-      winCount: isWinner ? increment(1) : increment(0)
-    });
-
-    // 방장인 경우 방 상태 즉시 대기중으로 초기화 (지연 시간 제거)
-    if (room.hostId === currentUser.uid) {
-      try {
-        const resetPlayers: Record<string, any> = {};
-        Object.keys(room.players).forEach(pid => {
-          resetPlayers[pid] = {
-            ...room.players[pid],
-            currentFloor: 0,
-            isReady: false,
-            isFinished: false,
-            facing: 1
-          };
-        });
-        await update(ref(rtdb, `rooms/${currentRoomId}`), { 
-          status: 'waiting',
-          players: resetPlayers,
-          stairSequence: null,
-          winnerId: null,
-          loserId: null
-        });
-      } catch (e) {
-        console.error("Room reset error:", e);
+  const capturePhoto = () => {
+    if (videoRef.current && canvasRef.current) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const size = Math.min(video.videoWidth, video.videoHeight);
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const startX = (video.videoWidth - size) / 2;
+        const startY = (video.videoHeight - size) / 2;
+        ctx.drawImage(video, startX, startY, size, size, 0, 0, size, size);
+        processAndSaveImage(canvas.toDataURL('image/jpeg'));
+        closeCamera();
       }
     }
   };
@@ -634,7 +650,7 @@ const App: React.FC = () => {
               ) : (
                 <div className="p-5 sm:p-6 bg-sky-50 rounded-3xl text-sky-500 font-bold animate-pulse text-base sm:text-lg border-2 border-sky-100">방장이 시작하길 기다리고 있어요...</div>
               )}
-              <button onClick={leaveRoom} className="w-full py-2 text-gray-400 font-bold hover:text-gray-600 transition">방 나가기</button>
+              <button onClick={() => leaveRoom(true)} className="w-full py-2 text-gray-400 font-bold hover:text-gray-600 transition">방 나가기</button>
             </div>
           </div>
         )}
