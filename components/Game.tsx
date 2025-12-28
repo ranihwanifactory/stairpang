@@ -35,21 +35,22 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
   const [result, setResult] = useState<'win' | 'lose' | null>(null);
   const [isDead, setIsDead] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
+  const [isDrainingFast, setIsDrainingFast] = useState(false); // 가속 소진 상태 여부
   
   const timerRef = useRef<any>(null);
   const lastSyncFloor = useRef(0);
   const floorRef = useRef(0);
   const facingRef = useRef(1);
   const movingTimeoutRef = useRef<any>(null);
+  const lastActionTime = useRef<number>(Date.now()); // 마지막 입력 시간 추적
 
-  // 고도에 따른 동적 배경색 결정 함수
   const getBackgroundClass = () => {
     if (floor < 60) return isPractice ? 'bg-[#7cfc00]' : 'bg-[#a0e9ff]';
-    if (floor < 120) return 'bg-[#2ecc71]'; // 숲 테마
-    if (floor < 200) return 'bg-[#f39c12]'; // 노을 테마
-    if (floor < 350) return 'bg-[#34495e]'; // 밤하늘 테마
-    if (floor < 500) return 'bg-[#1a1a2e]'; // 우주 테마
-    return 'bg-[#4834d4]'; // 은하 테마
+    if (floor < 120) return 'bg-[#2ecc71]';
+    if (floor < 200) return 'bg-[#f39c12]';
+    if (floor < 350) return 'bg-[#34495e]';
+    if (floor < 500) return 'bg-[#1a1a2e]';
+    return 'bg-[#4834d4]';
   };
 
   const generateStairs = useCallback(() => {
@@ -71,11 +72,13 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
     floorRef.current = 0;
     facingRef.current = 1;
     lastSyncFloor.current = 0;
+    lastActionTime.current = Date.now();
     setFloor(0);
     setFacing(1);
     setTimeLeft(30);
     setIsDead(false);
     setIsMoving(false);
+    setIsDrainingFast(false);
     setResult(null);
     setCountdown(3);
     setGameActive(false);
@@ -115,7 +118,6 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
 
   useEffect(() => {
     generateStairs();
-
     let playersListener: any = null;
     let roomStatusListener: any = null;
 
@@ -147,7 +149,6 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
         if (data && data.status === 'finished' && !result) {
           setGameActive(false);
           if (timerRef.current) clearInterval(timerRef.current);
-          
           if (data.winnerId === uid) {
             setResult('win');
             playSound('win');
@@ -165,6 +166,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
         if (prev <= 1) {
           clearInterval(cdInterval);
           setGameActive(true);
+          lastActionTime.current = Date.now();
           playSound('start');
           return 0;
         }
@@ -182,11 +184,29 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
     };
   }, [roomId, uid, generateStairs, isPractice, result]);
 
+  // 타이머 로직 업데이트: 입력 속도에 따른 가속 소진 적용
   useEffect(() => {
     if (gameActive && !isDead && !result) {
       timerRef.current = setInterval(() => {
+        const now = Date.now();
+        const idleTime = (now - lastActionTime.current) / 1000; // 마지막 입력 후 경과 초
+        
+        // 정체 페널티 계산 (0.6초 이상 입력 없으면 소진 속도 증가)
+        let penalty = 0;
+        if (idleTime > 0.6) {
+          // 정체 시간이 길어질수록 초당 0.1~0.5의 추가 페널티가 붙음
+          penalty = Math.min(1.5, (idleTime - 0.6) * 1.2); 
+          if (!isDrainingFast) setIsDrainingFast(true);
+        } else {
+          if (isDrainingFast) setIsDrainingFast(false);
+        }
+
         setTimeLeft(prev => {
-          const nextVal = prev - 0.1;
+          // 기본 소진량(0.1) + 정체 페널티
+          const baseDrain = 0.1;
+          const totalDrain = baseDrain + (penalty / 10); // 100ms마다 실행되므로 1/10
+          const nextVal = prev - totalDrain;
+          
           if (nextVal <= 0) {
             clearInterval(timerRef.current);
             gameOver();
@@ -197,10 +217,13 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
       }, 100);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [gameActive, isDead, result, gameOver]);
+  }, [gameActive, isDead, result, gameOver, isDrainingFast]);
 
   const handleStep = useCallback((type: 'up' | 'turn') => {
     if (!gameActive || isDead || result) return;
+
+    // 입력 시간 갱신
+    lastActionTime.current = Date.now();
 
     let nextFacing = facingRef.current;
     if (type === 'turn') {
@@ -220,6 +243,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
       if (movingTimeoutRef.current) clearTimeout(movingTimeoutRef.current);
       movingTimeoutRef.current = setTimeout(() => setIsMoving(false), 150);
 
+      // 보너스 시간 부여 (성공 시 소진 속도 가속화 상태 해제는 위 useEffect에서 처리됨)
       setTimeLeft(prev => Math.min(30, prev + (isPractice ? 0.4 : 0.25))); 
 
       if (!isPractice && (nextFloor - lastSyncFloor.current >= 2)) {
@@ -256,14 +280,19 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
 
   return (
     <div className={`fixed inset-0 overflow-hidden transition-colors duration-1000 ease-in-out ${getBackgroundClass()} flex flex-col items-center font-['Jua'] select-none`}>
-      {/* 배경 장식용 그라데이션 오버레이 */}
       <div className="absolute inset-0 bg-gradient-to-b from-black/10 to-transparent pointer-events-none" />
 
-      <div className="absolute top-16 left-1/2 -translate-x-1/2 w-[80%] max-w-md h-6 bg-white/30 rounded-full border-4 border-white shadow-lg z-50 overflow-hidden backdrop-blur-sm">
+      {/* 가속 소진 상태일 때 붉은색 경고 박스 */}
+      <div className={`absolute top-16 left-1/2 -translate-x-1/2 w-[80%] max-w-md h-6 bg-white/30 rounded-full border-4 border-white shadow-lg z-50 overflow-hidden backdrop-blur-sm transition-all ${isDrainingFast ? 'animate-pulse border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.7)]' : ''}`}>
         <div 
-          className={`h-full transition-all duration-100 ease-linear ${timeLeft < 5 ? 'bg-red-500' : isPractice ? 'bg-green-400' : 'bg-yellow-400'}`}
+          className={`h-full transition-all duration-100 ease-linear ${isDrainingFast ? 'bg-red-600' : timeLeft < 5 ? 'bg-red-400' : isPractice ? 'bg-green-400' : 'bg-yellow-400'}`}
           style={{ width: `${(timeLeft / 30) * 100}%` }}
         />
+        {isDrainingFast && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <span className="text-[10px] text-white font-bold animate-bounce">⚡ 가속 소진 중! ⚡</span>
+          </div>
+        )}
       </div>
 
       <div className="absolute top-6 left-6 z-40">
@@ -385,14 +414,14 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
         <div className="max-w-md mx-auto flex justify-between gap-4 h-28 sm:h-32">
           <button 
             onPointerDown={(e) => { e.preventDefault(); handleStep('turn'); }} 
-            className="flex-1 bg-[#ff5e57] shadow-[0_10px_0_#d63031] active:scale-95 transition-all text-white rounded-[32px] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/30 group"
+            className={`flex-1 ${isDrainingFast ? 'bg-red-500 animate-pulse' : 'bg-[#ff5e57]'} shadow-[0_10px_0_#d63031] active:scale-95 transition-all text-white rounded-[32px] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/30 group`}
           >
             <span className="text-4xl mb-1 group-active:rotate-180 transition-transform duration-300">🔄</span>
             <span className="font-bold text-lg uppercase tracking-tighter">방향 전환</span>
           </button>
           <button 
             onPointerDown={(e) => { e.preventDefault(); handleStep('up'); }} 
-            className="flex-1 bg-[#3fb6ff] shadow-[0_10px_0_#0652dd] active:scale-95 transition-all text-white rounded-[32px] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/30 group"
+            className={`flex-1 ${isDrainingFast ? 'bg-red-400 animate-pulse' : 'bg-[#3fb6ff]'} shadow-[0_10px_0_#0652dd] active:scale-95 transition-all text-white rounded-[32px] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/30 group`}
           >
             <span className="text-4xl mb-1 group-active:scale-125 transition-transform duration-150">👣</span>
             <span className="font-bold text-lg uppercase tracking-tighter">계단 오르기</span>
