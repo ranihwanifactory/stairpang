@@ -58,8 +58,8 @@ export const Auth: React.FC = () => {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4">
       <div className="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-md border-4 border-pink-200">
-        <h1 className="text-4xl font-bold text-pink-500 mb-8 text-center float-anim">🐰 무한의 계단</h1>
-        <p className="text-center text-gray-500 mb-6">귀여운 친구들과 함께 놀아요!</p>
+        <h1 className="text-5xl font-bold text-pink-500 mb-8 text-center float-anim drop-shadow-md">🏆 100계단</h1>
+        <p className="text-center text-gray-500 mb-6 font-bold">100층까지 누가 더 빠를까?</p>
         
         <form onSubmit={handleAuth} className="space-y-4">
           <input

@@ -20,8 +20,11 @@ interface OpponentData {
   charId: string;
   name: string;
   facing: number;
+  isFinished: boolean;
   customImageUrl?: string;
 }
+
+const GOAL_FLOOR = 100;
 
 export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, customImageUrl, stairSequence }) => {
   const isPractice = roomId === 'practice';
@@ -29,28 +32,27 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
   const [facing, setFacing] = useState(1);
   const [stairs, setStairs] = useState<number[]>([]);
   const [opponentFloors, setOpponentFloors] = useState<Record<string, OpponentData>>({});
-  const [timeLeft, setTimeLeft] = useState(30);
+  const [timeLeft, setTimeLeft] = useState(15); // 더 타이트한 15초 시작
   const [gameActive, setGameActive] = useState(false);
   const [countdown, setCountdown] = useState(3);
   const [result, setResult] = useState<'win' | 'lose' | null>(null);
   const [isDead, setIsDead] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
-  const [isDrainingFast, setIsDrainingFast] = useState(false); // 가속 소진 상태 여부
+  const [isDrainingFast, setIsDrainingFast] = useState(false);
   
   const timerRef = useRef<any>(null);
   const lastSyncFloor = useRef(0);
   const floorRef = useRef(0);
   const facingRef = useRef(1);
   const movingTimeoutRef = useRef<any>(null);
-  const lastActionTime = useRef<number>(Date.now()); // 마지막 입력 시간 추적
+  const lastActionTime = useRef<number>(Date.now());
 
   const getBackgroundClass = () => {
-    if (floor < 60) return isPractice ? 'bg-[#7cfc00]' : 'bg-[#a0e9ff]';
-    if (floor < 120) return 'bg-[#2ecc71]';
-    if (floor < 200) return 'bg-[#f39c12]';
-    if (floor < 350) return 'bg-[#34495e]';
-    if (floor < 500) return 'bg-[#1a1a2e]';
-    return 'bg-[#4834d4]';
+    const progress = floor / GOAL_FLOOR;
+    if (progress < 0.3) return isPractice ? 'bg-[#7cfc00]' : 'bg-[#a0e9ff]';
+    if (progress < 0.6) return 'bg-[#2ecc71]';
+    if (progress < 0.8) return 'bg-[#f39c12]';
+    return 'bg-[#34495e]';
   };
 
   const generateStairs = useCallback(() => {
@@ -61,7 +63,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
     const startDir = 1;
     const newStairs = [startDir, startDir]; 
     let currentX = startDir;
-    for (let i = 2; i < 1000; i++) {
+    for (let i = 2; i <= GOAL_FLOOR + 10; i++) {
       if (Math.random() > 0.7) currentX = currentX === 1 ? 0 : 1;
       newStairs.push(currentX);
     }
@@ -75,7 +77,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
     lastActionTime.current = Date.now();
     setFloor(0);
     setFacing(1);
-    setTimeLeft(30);
+    setTimeLeft(15);
     setIsDead(false);
     setIsMoving(false);
     setIsDrainingFast(false);
@@ -85,7 +87,38 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
     generateStairs();
   }, [generateStairs]);
 
-  const gameOver = useCallback(async () => {
+  // 최종 승자 판정 로직
+  const determineWinner = useCallback(async () => {
+    if (isPractice) return;
+    
+    const roomSnap = await get(ref(rtdb, `rooms/${roomId}`));
+    const roomData = roomSnap.val();
+    if (!roomData || roomData.status === 'finished') return;
+
+    const players = roomData.players;
+    const playerIds = Object.keys(players);
+    const allFinished = playerIds.every(id => players[id].isFinished || players[id].currentFloor >= GOAL_FLOOR);
+
+    if (allFinished) {
+      let winnerId = '';
+      let maxFloor = -1;
+      
+      playerIds.forEach(id => {
+        if (players[id].currentFloor > maxFloor) {
+          maxFloor = players[id].currentFloor;
+          winnerId = id;
+        }
+      });
+
+      await update(ref(rtdb, `rooms/${roomId}`), {
+        status: 'finished',
+        winnerId: winnerId,
+        loserId: playerIds.find(id => id !== winnerId) || 'unknown'
+      });
+    }
+  }, [roomId, isPractice]);
+
+  const gameOver = useCallback(async (reachedGoal = false) => {
     if (!gameActive || result || isDead) return;
     
     setIsDead(true);
@@ -93,37 +126,35 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
     if (timerRef.current) clearInterval(timerRef.current);
 
     if (isPractice) {
-      setResult('lose');
-      playSound('lose');
+      setResult(reachedGoal ? 'win' : 'lose');
+      if (reachedGoal) playSound('win'); else playSound('lose');
       return;
     }
 
-    try {
-      const roomSnap = await get(ref(rtdb, `rooms/${roomId}`));
-      const roomData = roomSnap.val();
-      if (roomData && roomData.status !== 'finished') {
-        const players = roomData.players;
-        const opponentId = Object.keys(players).find(id => id !== uid);
-        
-        await update(ref(rtdb, `rooms/${roomId}`), {
-          status: 'finished',
-          winnerId: opponentId || 'unknown',
-          loserId: uid
-        });
-      }
-    } catch (e) {
-      console.error("GameOver update error:", e);
+    // RTDB에 나의 종료 상태 업데이트
+    await update(ref(rtdb, `rooms/${roomId}/players/${uid}`), {
+      isFinished: true,
+      currentFloor: floorRef.current
+    });
+
+    if (reachedGoal) {
+      // 100층 도달 시 즉시 승리 처리
+      await update(ref(rtdb, `rooms/${roomId}`), {
+        status: 'finished',
+        winnerId: uid,
+        loserId: Object.keys(opponentFloors)[0] || 'unknown'
+      });
+    } else {
+      // 탈락 시 모든 플레이어가 종료되었는지 확인
+      determineWinner();
     }
-  }, [roomId, uid, isPractice, gameActive, result, isDead]);
+  }, [roomId, uid, isPractice, gameActive, result, isDead, opponentFloors, determineWinner]);
 
   useEffect(() => {
     generateStairs();
-    let playersListener: any = null;
-    let roomStatusListener: any = null;
-
     if (!isPractice) {
       const roomPlayersRef = ref(rtdb, `rooms/${roomId}/players`);
-      playersListener = onValue(roomPlayersRef, (snapshot) => {
+      onValue(roomPlayersRef, (snapshot) => {
         const players = snapshot.val();
         const opps: Record<string, OpponentData> = {};
         if (players) {
@@ -135,6 +166,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
                 charId: players[pId].characterId || 'rabbit',
                 name: players[pId].displayName || '친구',
                 facing: players[pId].facing || 1,
+                isFinished: players[pId].isFinished || false,
                 customImageUrl: players[pId].customCharacterURL 
               };
             }
@@ -144,7 +176,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
       });
 
       const roomRef = ref(rtdb, `rooms/${roomId}`);
-      roomStatusListener = onValue(roomRef, (snapshot) => {
+      onValue(roomRef, (snapshot) => {
         const data = snapshot.val();
         if (data && data.status === 'finished' && !result) {
           setGameActive(false);
@@ -184,32 +216,28 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
     };
   }, [roomId, uid, generateStairs, isPractice, result]);
 
-  // 타이머 로직 업데이트: 입력 속도에 따른 가속 소진 적용
   useEffect(() => {
     if (gameActive && !isDead && !result) {
       timerRef.current = setInterval(() => {
         const now = Date.now();
-        const idleTime = (now - lastActionTime.current) / 1000; // 마지막 입력 후 경과 초
+        const idleTime = (now - lastActionTime.current) / 1000;
         
-        // 정체 페널티 계산 (0.6초 이상 입력 없으면 소진 속도 증가)
         let penalty = 0;
-        if (idleTime > 0.6) {
-          // 정체 시간이 길어질수록 초당 0.1~0.5의 추가 페널티가 붙음
-          penalty = Math.min(1.5, (idleTime - 0.6) * 1.2); 
+        if (idleTime > 0.5) { // 0.5초만 멈춰도 패널티
+          penalty = Math.min(2.0, (idleTime - 0.5) * 1.5); 
           if (!isDrainingFast) setIsDrainingFast(true);
         } else {
           if (isDrainingFast) setIsDrainingFast(false);
         }
 
         setTimeLeft(prev => {
-          // 기본 소진량(0.1) + 정체 페널티
-          const baseDrain = 0.1;
-          const totalDrain = baseDrain + (penalty / 10); // 100ms마다 실행되므로 1/10
+          const baseDrain = 0.15; // 기본 소진 속도 증가
+          const totalDrain = baseDrain + (penalty / 10);
           const nextVal = prev - totalDrain;
           
           if (nextVal <= 0) {
             clearInterval(timerRef.current);
-            gameOver();
+            gameOver(false);
             return 0;
           }
           return nextVal;
@@ -222,9 +250,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
   const handleStep = useCallback((type: 'up' | 'turn') => {
     if (!gameActive || isDead || result) return;
 
-    // 입력 시간 갱신
     lastActionTime.current = Date.now();
-
     let nextFacing = facingRef.current;
     if (type === 'turn') {
       nextFacing = nextFacing === 1 ? 0 : 1;
@@ -243,18 +269,22 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
       if (movingTimeoutRef.current) clearTimeout(movingTimeoutRef.current);
       movingTimeoutRef.current = setTimeout(() => setIsMoving(false), 150);
 
-      // 보너스 시간 부여 (성공 시 소진 속도 가속화 상태 해제는 위 useEffect에서 처리됨)
-      setTimeLeft(prev => Math.min(30, prev + (isPractice ? 0.4 : 0.25))); 
+      // 보너스 시간 대폭 축소 (0.18초)
+      setTimeLeft(prev => Math.min(20, prev + (isPractice ? 0.25 : 0.18))); 
 
-      if (!isPractice && (nextFloor - lastSyncFloor.current >= 2)) {
-        lastSyncFloor.current = nextFloor;
+      // 100층 도달 체크
+      if (nextFloor >= GOAL_FLOOR) {
+        gameOver(true);
+      }
+
+      if (!isPractice) {
         update(ref(rtdb, `rooms/${roomId}/players/${uid}`), {
           currentFloor: nextFloor,
           facing: nextFacing
         });
       }
     } else {
-      gameOver();
+      gameOver(false);
     }
   }, [gameActive, isDead, result, stairs, roomId, uid, gameOver, isPractice]);
 
@@ -282,39 +312,46 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
     <div className={`fixed inset-0 overflow-hidden transition-colors duration-1000 ease-in-out ${getBackgroundClass()} flex flex-col items-center font-['Jua'] select-none`}>
       <div className="absolute inset-0 bg-gradient-to-b from-black/10 to-transparent pointer-events-none" />
 
-      {/* 가속 소진 상태일 때 붉은색 경고 박스 */}
+      {/* 실시간 레이스 진행도 게이지 */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 w-[90%] max-w-lg h-10 bg-black/20 rounded-2xl flex items-center px-4 z-[60] backdrop-blur-sm border-2 border-white/20">
+         <div className="relative w-full h-2 bg-white/20 rounded-full">
+            {/* 나의 위치 */}
+            <div 
+              className="absolute top-1/2 -translate-y-1/2 transition-all duration-300 z-10"
+              style={{ left: `${(floor / GOAL_FLOOR) * 100}%` }}
+            >
+              <div className="w-8 h-8 -ml-4 flex items-center justify-center bg-white rounded-full shadow-lg border-2 border-pink-400">
+                <CharacterSprite type={characterId} facing={1} isMoving={false} size={20} customImageUrl={customImageUrl} />
+              </div>
+            </div>
+            {/* 상대방 위치 */}
+            {/* Explicitly typing the mapped item to resolve the 'unknown' property errors */}
+            {Object.values(opponentFloors).map((opp: OpponentData) => (
+              <div 
+                key={opp.uid}
+                className="absolute top-1/2 -translate-y-1/2 transition-all duration-300"
+                style={{ left: `${(opp.floor / GOAL_FLOOR) * 100}%` }}
+              >
+                <div className="w-6 h-6 -ml-3 flex items-center justify-center bg-gray-200 rounded-full shadow-md border-2 border-gray-400 opacity-80">
+                  <CharacterSprite type={opp.charId} facing={1} isMoving={false} size={15} customImageUrl={opp.customImageUrl} />
+                </div>
+              </div>
+            ))}
+            <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 text-2xl">🏁</div>
+         </div>
+      </div>
+
       <div className={`absolute top-16 left-1/2 -translate-x-1/2 w-[80%] max-w-md h-6 bg-white/30 rounded-full border-4 border-white shadow-lg z-50 overflow-hidden backdrop-blur-sm transition-all ${isDrainingFast ? 'animate-pulse border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.7)]' : ''}`}>
         <div 
           className={`h-full transition-all duration-100 ease-linear ${isDrainingFast ? 'bg-red-600' : timeLeft < 5 ? 'bg-red-400' : isPractice ? 'bg-green-400' : 'bg-yellow-400'}`}
-          style={{ width: `${(timeLeft / 30) * 100}%` }}
+          style={{ width: `${(timeLeft / 20) * 100}%` }}
         />
-        {isDrainingFast && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <span className="text-[10px] text-white font-bold animate-bounce">⚡ 가속 소진 중! ⚡</span>
-          </div>
-        )}
       </div>
 
-      <div className="absolute top-6 left-6 z-40">
+      <div className="absolute top-16 left-6 z-40">
         <div className="bg-white/95 px-4 py-2 rounded-2xl font-bold text-3xl shadow-[0_4px_0_#ccc] text-[#333] border-2 border-white">
-          {floor} <span className="text-sm">F</span>
+          {floor} <span className="text-sm">/ {GOAL_FLOOR}F</span>
         </div>
-      </div>
-      
-      <div className="absolute top-6 right-6 flex flex-col items-end gap-2 z-40">
-        {isPractice ? (
-          <div className="bg-green-600 text-white px-4 py-1 rounded-full text-xs font-bold shadow-md border-2 border-white/30 animate-pulse">연습 중 🌱</div>
-        ) : (
-          Object.values(opponentFloors).map((data: OpponentData) => (
-            <div key={data.uid} className="bg-white/90 px-3 py-1 rounded-xl text-xs font-bold border-2 border-pink-200 flex items-center gap-2 shadow-sm">
-              <span className="w-5 h-5 flex items-center justify-center">
-                <CharacterSprite type={data.charId} facing={1} isMoving={false} size={20} customImageUrl={data.customImageUrl} />
-              </span>
-              <span className="text-pink-600 truncate max-w-[60px]">{data.name}</span>
-              <span className="bg-pink-100 px-2 rounded-full">{data.floor}F</span>
-            </div>
-          ))
-        )}
       </div>
 
       {countdown > 0 && (
@@ -326,36 +363,24 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
       )}
 
       {result && (
-        <div className="absolute inset-0 z-[100] bg-black/60 backdrop-blur-lg flex flex-col items-center justify-center p-6">
-           <div className="bg-white p-6 sm:p-8 rounded-[40px] shadow-[0_20px_50px_rgba(0,0,0,0.3)] border-[12px] border-pink-100 text-center animate-in zoom-in duration-500 w-full max-w-sm relative">
-             <div className="absolute -top-16 left-1/2 -translate-x-1/2 text-8xl drop-shadow-lg animate-bounce">
-                {result === 'win' ? '👑' : '👻'}
+        <div className="absolute inset-0 z-[100] bg-black/60 backdrop-blur-lg flex flex-col items-center justify-center p-6 text-center">
+           <div className="bg-white p-8 rounded-[40px] shadow-2xl border-[12px] border-pink-100 animate-in zoom-in duration-500 w-full max-w-sm relative">
+             <div className="text-8xl mb-4 animate-bounce">
+                {result === 'win' ? '🥇' : '💨'}
              </div>
-             <h2 className={`text-4xl sm:text-6xl ${result === 'win' ? 'text-yellow-500' : 'text-gray-500'} mb-4 tracking-tighter`}>
-               {result === 'win' ? '위너! 대단해!' : '아고고! 패배...'}
+             <h2 className={`text-5xl font-black ${result === 'win' ? 'text-yellow-500' : 'text-gray-500'} mb-2`}>
+               {result === 'win' ? '우승!!' : '아쉬워요!'}
              </h2>
-             <div className={`p-4 sm:p-6 rounded-3xl mb-6 sm:mb-8 ${result === 'win' ? 'bg-yellow-50 border-4 border-yellow-200' : 'bg-gray-50 border-4 border-gray-200'}`}>
-                <p className="text-gray-400 text-[10px] sm:text-sm font-bold uppercase mb-1">최종 기록</p>
-                <p className={`text-5xl sm:text-6xl font-black ${result === 'win' ? 'text-yellow-600' : 'text-gray-600'}`}>{floor}층</p>
+             <p className="text-gray-400 font-bold mb-6">{result === 'win' ? '100층에 먼저 도착했어요!' : '상대방이 더 높이 올라갔어요.'}</p>
+             
+             <div className="bg-gray-50 p-6 rounded-3xl mb-8 border-4 border-gray-100">
+                <p className="text-xs text-gray-400 font-bold uppercase mb-1">나의 최고 층수</p>
+                <p className="text-6xl font-black text-pink-500">{floor}층</p>
              </div>
              
              <div className="flex flex-col gap-3">
-               {isPractice ? (
-                 <button onClick={resetPracticeGame} className="w-full bg-green-500 text-white font-bold py-4 rounded-[20px] shadow-[0_6px_0_#2e7d32] text-xl active:translate-y-1 active:shadow-none transition-all">한 번 더 도전! 🔄</button>
-               ) : (
-                 <button 
-                  onClick={() => onFinish(floor, result === 'win', 'rematch')} 
-                  className="w-full bg-green-500 text-white font-bold py-4 rounded-[20px] shadow-[0_6px_0_#2e7d32] text-xl active:translate-y-1 active:shadow-none transition-all"
-                 >
-                    재대결 하러가기! 🔄
-                 </button>
-               )}
-               <button 
-                  onClick={() => onFinish(floor, result === 'win', 'lobby')} 
-                  className="w-full bg-gray-400 hover:bg-gray-500 text-white font-bold py-4 rounded-[20px] shadow-[0_6px_0_#666] text-xl active:translate-y-1 active:shadow-none transition-all"
-               >
-                  그만할래요 (로비로) 🏠
-               </button>
+               <button onClick={() => onFinish(floor, result === 'win', 'rematch')} className="w-full bg-green-500 text-white font-bold py-4 rounded-2xl shadow-[0_6px_0_#2e7d32] text-xl active:translate-y-1 active:shadow-none transition-all">다시 대결! 🔄</button>
+               <button onClick={() => onFinish(floor, result === 'win', 'lobby')} className="w-full bg-gray-400 text-white font-bold py-4 rounded-2xl shadow-[0_6px_0_#666] text-xl active:translate-y-1 active:shadow-none transition-all">로비로 이동 🏠</button>
              </div>
            </div>
         </div>
@@ -366,27 +391,35 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
           className="relative transition-all duration-150 ease-out"
           style={{ transform: `translate(${-currentPlayerX}px, ${floor * 40 + 150}px)` }}
         >
-          {Array.from({ length: 70 }).map((_, i) => {
+          {/* 결승선 연출 (100층) */}
+          <div 
+             className="absolute w-[400px] h-2 bg-white/50 z-0"
+             style={{ bottom: `${GOAL_FLOOR * 40}px`, left: '0', transform: 'translateX(-50%)' }}
+          >
+             <div className="absolute -top-12 left-1/2 -translate-x-1/2 text-4xl animate-bounce">🏆 FINISH 🏆</div>
+             <div className="w-full h-full bg-[repeating-linear-gradient(45deg,#000,#000_10px,#fff_10px,#fff_20px)] opacity-50" />
+          </div>
+
+          {Array.from({ length: 120 }).map((_, i) => {
             const stairIndex = floor - 5 + i;
-            if (stairIndex < 0) return null;
+            if (stairIndex < 0 || stairIndex > GOAL_FLOOR + 5) return null;
             const x = getStairX(stairIndex);
             return (
               <div 
                 key={`stair-${stairIndex}`}
-                className="absolute w-32 sm:w-36 h-10 bg-[#e74c3c] border-b-[6px] border-[#c0392b] border-r-4 border-l-4 border-white/20 rounded-sm shadow-lg z-10"
+                className={`absolute w-32 sm:w-36 h-10 border-b-[6px] border-r-4 border-l-4 border-white/20 rounded-sm shadow-lg z-10 ${stairIndex >= GOAL_FLOOR ? 'bg-yellow-400 border-yellow-600' : 'bg-[#e74c3c] border-[#c0392b]'}`}
                 style={{
                   bottom: `${stairIndex * 40}px`,
                   left: `${x}px`,
                   transform: 'translateX(-50%)',
                   opacity: Math.max(0, 1 - Math.abs(stairIndex - floor) / 50),
-                  backgroundImage: `linear-gradient(90deg, transparent 50%, rgba(255,255,255,0.1) 50.5%, transparent 51%), linear-gradient(0deg, transparent 90%, rgba(0,0,0,0.1) 90.5%, transparent 91%)`,
-                  backgroundSize: '30px 40px'
                 }}
               />
             );
           })}
 
           {!isPractice && 
+          /* Explicitly typing the entries to resolve the 'unknown' property errors */
           Object.entries(opponentFloors).map(([id, data]: [string, OpponentData]) => {
             const x = getStairX(data.floor);
             return (
@@ -410,21 +443,15 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
         </div>
       </div>
 
-      <div className="w-full bg-white/95 backdrop-blur-md p-4 pb-8 sm:p-8 border-t-8 border-gray-100 z-40">
-        <div className="max-w-md mx-auto flex justify-between gap-4 h-28 sm:h-32">
-          <button 
-            onPointerDown={(e) => { e.preventDefault(); handleStep('turn'); }} 
-            className={`flex-1 ${isDrainingFast ? 'bg-red-500 animate-pulse' : 'bg-[#ff5e57]'} shadow-[0_10px_0_#d63031] active:scale-95 transition-all text-white rounded-[32px] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/30 group`}
-          >
-            <span className="text-4xl mb-1 group-active:rotate-180 transition-transform duration-300">🔄</span>
-            <span className="font-bold text-lg uppercase tracking-tighter">방향 전환</span>
+      <div className="w-full bg-white/95 backdrop-blur-md p-4 pb-8 border-t-8 border-gray-100 z-40 shadow-[0_-10px_30px_rgba(0,0,0,0.1)]">
+        <div className="max-w-md mx-auto flex justify-between gap-4 h-28">
+          <button onPointerDown={(e) => { e.preventDefault(); handleStep('turn'); }} className={`flex-1 ${isDrainingFast ? 'bg-red-500 animate-pulse' : 'bg-[#ff5e57]'} shadow-[0_10px_0_#d63031] active:translate-y-2 active:shadow-none transition-all text-white rounded-3xl border-4 border-white/30 flex flex-col items-center justify-center`}>
+            <span className="text-4xl mb-1">🔄</span>
+            <span className="font-bold text-lg uppercase">회전</span>
           </button>
-          <button 
-            onPointerDown={(e) => { e.preventDefault(); handleStep('up'); }} 
-            className={`flex-1 ${isDrainingFast ? 'bg-red-400 animate-pulse' : 'bg-[#3fb6ff]'} shadow-[0_10px_0_#0652dd] active:scale-95 transition-all text-white rounded-[32px] active:shadow-none active:translate-y-2 flex flex-col items-center justify-center border-4 border-white/30 group`}
-          >
-            <span className="text-4xl mb-1 group-active:scale-125 transition-transform duration-150">👣</span>
-            <span className="font-bold text-lg uppercase tracking-tighter">계단 오르기</span>
+          <button onPointerDown={(e) => { e.preventDefault(); handleStep('up'); }} className={`flex-1 ${isDrainingFast ? 'bg-red-400 animate-pulse' : 'bg-[#3fb6ff]'} shadow-[0_10px_0_#0652dd] active:translate-y-2 active:shadow-none transition-all text-white rounded-3xl border-4 border-white/30 flex flex-col items-center justify-center`}>
+            <span className="text-4xl mb-1">👣</span>
+            <span className="font-bold text-lg uppercase">점프</span>
           </button>
         </div>
       </div>

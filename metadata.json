@@ -1,6 +1,7 @@
+
 {
-  "name": "무한의 계단: 귀여운 친구들",
-  "description": "귀여운 동물 친구들 혹은 내 얼굴로 즐기는 실시간 무한의 계단 대결!",
+  "name": "100계단: 귀여운 친구들",
+  "description": "100층을 먼저 점령하라! 내 얼굴로 즐기는 실시간 100계단 오르기 레이스!",
   "requestFramePermissions": [
     "microphone",
     "camera"
