@@ -22,6 +22,7 @@ const App: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [inputCode, setInputCode] = useState('');
   const [copyFeedback, setCopyFeedback] = useState(false);
+  const [targetFloor, setTargetFloor] = useState(100); // 방 생성용 목표 계단수 상태
   
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [showPhotoOptions, setShowPhotoOptions] = useState(false);
@@ -195,6 +196,7 @@ const App: React.FC = () => {
         hostId: myUid,
         hostName: profile.displayName || '익명',
         status: 'waiting',
+        targetFloor: targetFloor, // 선택된 목표 계단 수 저장
         createdAt: Date.now(),
         players: {
           [myUid]: {
@@ -223,8 +225,8 @@ const App: React.FC = () => {
     if (!currentRoomId || !room) return;
     const shareUrl = `${window.location.origin}/#${currentRoomId}`;
     const shareData = {
-      title: '100계단 레이스 도전! 🥇',
-      text: `${profile?.displayName}님이 100층 레이스 대결을 신청했어요! 방 번호: ${room.shortCode}`,
+      title: '계단 레이스 도전! 🥇',
+      text: `${profile?.displayName}님이 ${room.targetFloor}층 레이스 대결을 신청했어요! 방 번호: ${room.shortCode}`,
       url: shareUrl,
     };
     try {
@@ -314,7 +316,8 @@ const App: React.FC = () => {
         const startDir = 1;
         const sequence = [startDir, startDir];
         let currentX = startDir;
-        for (let i = 2; i < 110; i++) {
+        // 목표 계단수 + 여유분만큼 계단 생성
+        for (let i = 2; i < room.targetFloor + 20; i++) {
           if (Math.random() > 0.7) currentX = currentX === 1 ? 0 : 1;
           sequence.push(currentX);
         }
@@ -396,7 +399,6 @@ const App: React.FC = () => {
     }
   };
 
-  // 이미지 처리 로직 생략 (기존과 동일)
   const processAndSaveImage = async (imageSrc: string) => {
     if (!user || !profile) return;
     setIsProcessing(true);
@@ -473,6 +475,7 @@ const App: React.FC = () => {
       onFinish={handleGameFinish} 
       customImageUrl={profile.customCharacterURL}
       stairSequence={room?.stairSequence}
+      targetFloor={room?.targetFloor || 100} // 동적 목표 계단수 전달
     />;
   }
 
@@ -482,7 +485,7 @@ const App: React.FC = () => {
         <div className="flex items-center gap-3">
           <img src={profile?.photoURL} className="w-10 h-10 rounded-full border-2 border-pink-200 object-cover" alt="" />
           <div>
-            <p className="font-bold text-gray-700 leading-tight">100계단 레이서 {profile?.displayName}</p>
+            <p className="font-bold text-gray-700 leading-tight">계단 레이서 {profile?.displayName}</p>
             <p className="text-xs text-pink-400 font-bold">🥇 {profile?.winCount}번 우승!</p>
           </div>
         </div>
@@ -539,9 +542,21 @@ const App: React.FC = () => {
               )}
             </section>
 
-            <div className="bg-pink-100 p-4 rounded-2xl text-pink-600 text-xs font-bold leading-relaxed border-2 border-pink-200">
-              💡 <span className="underline">게임 규칙:</span> 먼저 100층에 도달하면 승리! 만약 도중에 모두 탈락하면 더 높이 올라간 사람이 승리합니다. 쉬지 않고 올라가야 시간이 부족하지 않아요!
-            </div>
+            <section className="bg-white p-6 rounded-[32px] shadow-lg border-2 border-pink-100">
+               <h2 className="text-lg font-bold text-gray-800 mb-4">🏆 대결 설정</h2>
+               <p className="text-sm text-gray-500 mb-3 font-bold">목표 계단 수 선택</p>
+               <div className="flex flex-wrap gap-2 justify-center">
+                 {[30, 50, 100, 200, 300, 500].map(val => (
+                   <button 
+                     key={val} 
+                     onClick={() => setTargetFloor(val)}
+                     className={`px-4 py-2 rounded-xl font-bold transition-all border-2 ${targetFloor === val ? 'bg-pink-500 text-white border-pink-500 scale-105 shadow-md' : 'bg-white text-gray-400 border-gray-100 hover:border-pink-200'}`}
+                   >
+                     {val}층
+                   </button>
+                 ))}
+               </div>
+            </section>
 
             <div className="grid grid-cols-2 gap-4">
               <button disabled={isProcessing || !profile} onClick={createRoom} className="bg-pink-500 text-white text-xl font-bold py-6 rounded-3xl shadow-lg border-b-4 border-pink-700 active:translate-y-1 active:shadow-none transition-all">대결 시작!</button>
@@ -565,7 +580,7 @@ const App: React.FC = () => {
                   availableRooms.map(r => (
                     <div key={r.id} className="flex items-center justify-between p-4 rounded-2xl bg-sky-50 border border-sky-100">
                       <div className="flex-1">
-                        <span className="font-bold text-gray-700 block">{r.hostName}의 100계단</span>
+                        <span className="font-bold text-gray-700 block">{r.hostName}의 {r.targetFloor}계단</span>
                         <span className="text-[10px] text-sky-400 font-bold uppercase">Code: {r.shortCode} • {Object.keys(r.players || {}).length}명</span>
                       </div>
                       <button onClick={() => joinRoom(r.id)} className="bg-sky-500 text-white px-5 py-2 rounded-xl font-bold text-sm shadow-md transition-all active:scale-95">참여!</button>
@@ -580,7 +595,7 @@ const App: React.FC = () => {
         {view === 'room' && room && (
           <div className="bg-white p-8 rounded-3xl shadow-xl text-center border-2 border-sky-100 relative">
             <div className="bg-yellow-100 py-6 rounded-[32px] mb-4 border-2 border-yellow-200">
-              <p className="text-xs text-yellow-600 font-bold mb-1">우리 방 대결 코드</p>
+              <p className="text-xs text-yellow-600 font-bold mb-1">우리 방 대결 코드 ({room.targetFloor}층 레이스)</p>
               <h2 className="text-5xl font-black text-yellow-700 tracking-widest">{room.shortCode}</h2>
             </div>
             <button onClick={shareRoom} className="w-full bg-sky-100 text-sky-600 py-4 rounded-2xl font-bold text-sm mb-6 active:scale-95 transition-all">
@@ -615,7 +630,7 @@ const App: React.FC = () => {
 
         {view === 'ranking' && (
           <div className="bg-white p-6 rounded-[32px] shadow-xl border-2 border-pink-100">
-             <h2 className="text-2xl font-bold text-center text-pink-500 mb-6 flex items-center justify-center gap-3">🏆 100계단 명예의 전당</h2>
+             <h2 className="text-2xl font-bold text-center text-pink-500 mb-6 flex items-center justify-center gap-3">🏆 계단 레이스 명예의 전당</h2>
              <div className="space-y-3">
                {rankings.length === 0 ? (
                  <p className="text-center text-gray-400 py-10 font-bold">첫 번째 우승자가 되어보세요!</p>

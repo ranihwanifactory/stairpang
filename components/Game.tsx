@@ -12,6 +12,7 @@ interface GameProps {
   onFinish: (score: number, isWinner: boolean, action: 'rematch' | 'lobby') => void;
   customImageUrl?: string;
   stairSequence?: number[];
+  targetFloor?: number; // 목표 계단 수 추가
 }
 
 interface OpponentData {
@@ -24,15 +25,23 @@ interface OpponentData {
   customImageUrl?: string;
 }
 
-const GOAL_FLOOR = 100;
-
-export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, customImageUrl, stairSequence }) => {
+export const Game: React.FC<GameProps> = ({ 
+  roomId, 
+  uid, 
+  characterId, 
+  onFinish, 
+  customImageUrl, 
+  stairSequence,
+  targetFloor = 100 // 기본값 100
+}) => {
   const isPractice = roomId === 'practice';
+  const GOAL_FLOOR = targetFloor; // 동적으로 목표 설정
+  
   const [floor, setFloor] = useState(0);
   const [facing, setFacing] = useState(1);
   const [stairs, setStairs] = useState<number[]>([]);
   const [opponentFloors, setOpponentFloors] = useState<Record<string, OpponentData>>({});
-  const [timeLeft, setTimeLeft] = useState(15); // 더 타이트한 15초 시작
+  const [timeLeft, setTimeLeft] = useState(15); 
   const [gameActive, setGameActive] = useState(false);
   const [countdown, setCountdown] = useState(3);
   const [result, setResult] = useState<'win' | 'lose' | null>(null);
@@ -68,7 +77,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
       newStairs.push(currentX);
     }
     setStairs(newStairs);
-  }, [isPractice, stairSequence]);
+  }, [isPractice, stairSequence, GOAL_FLOOR]);
 
   const resetPracticeGame = useCallback(() => {
     floorRef.current = 0;
@@ -116,7 +125,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
         loserId: playerIds.find(id => id !== winnerId) || 'unknown'
       });
     }
-  }, [roomId, isPractice]);
+  }, [roomId, isPractice, GOAL_FLOOR]);
 
   const gameOver = useCallback(async (reachedGoal = false) => {
     if (!gameActive || result || isDead) return;
@@ -138,7 +147,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
     });
 
     if (reachedGoal) {
-      // 100층 도달 시 즉시 승리 처리
+      // 목표 층 도달 시 즉시 승리 처리
       await update(ref(rtdb, `rooms/${roomId}`), {
         status: 'finished',
         winnerId: uid,
@@ -223,7 +232,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
         const idleTime = (now - lastActionTime.current) / 1000;
         
         let penalty = 0;
-        if (idleTime > 0.5) { // 0.5초만 멈춰도 패널티
+        if (idleTime > 0.5) { 
           penalty = Math.min(2.0, (idleTime - 0.5) * 1.5); 
           if (!isDrainingFast) setIsDrainingFast(true);
         } else {
@@ -231,7 +240,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
         }
 
         setTimeLeft(prev => {
-          const baseDrain = 0.15; // 기본 소진 속도 증가
+          const baseDrain = 0.15; 
           const totalDrain = baseDrain + (penalty / 10);
           const nextVal = prev - totalDrain;
           
@@ -269,10 +278,9 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
       if (movingTimeoutRef.current) clearTimeout(movingTimeoutRef.current);
       movingTimeoutRef.current = setTimeout(() => setIsMoving(false), 150);
 
-      // 보너스 시간 대폭 축소 (0.18초)
       setTimeLeft(prev => Math.min(20, prev + (isPractice ? 0.25 : 0.18))); 
 
-      // 100층 도달 체크
+      // 목표 층 도달 체크
       if (nextFloor >= GOAL_FLOOR) {
         gameOver(true);
       }
@@ -286,7 +294,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
     } else {
       gameOver(false);
     }
-  }, [gameActive, isDead, result, stairs, roomId, uid, gameOver, isPractice]);
+  }, [gameActive, isDead, result, stairs, roomId, uid, gameOver, isPractice, GOAL_FLOOR]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -325,7 +333,6 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
               </div>
             </div>
             {/* 상대방 위치 */}
-            {/* Explicitly typing the mapped item to resolve the 'unknown' property errors */}
             {Object.values(opponentFloors).map((opp: OpponentData) => (
               <div 
                 key={opp.uid}
@@ -371,7 +378,7 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
              <h2 className={`text-5xl font-black ${result === 'win' ? 'text-yellow-500' : 'text-gray-500'} mb-2`}>
                {result === 'win' ? '우승!!' : '아쉬워요!'}
              </h2>
-             <p className="text-gray-400 font-bold mb-6">{result === 'win' ? '100층에 먼저 도착했어요!' : '상대방이 더 높이 올라갔어요.'}</p>
+             <p className="text-gray-400 font-bold mb-6">{result === 'win' ? `${GOAL_FLOOR}층에 먼저 도착했어요!` : '상대방이 더 높이 올라갔어요.'}</p>
              
              <div className="bg-gray-50 p-6 rounded-3xl mb-8 border-4 border-gray-100">
                 <p className="text-xs text-gray-400 font-bold uppercase mb-1">나의 최고 층수</p>
@@ -391,16 +398,16 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
           className="relative transition-all duration-150 ease-out"
           style={{ transform: `translate(${-currentPlayerX}px, ${floor * 40 + 150}px)` }}
         >
-          {/* 결승선 연출 (100층) */}
+          {/* 결승선 연출 */}
           <div 
              className="absolute w-[400px] h-2 bg-white/50 z-0"
              style={{ bottom: `${GOAL_FLOOR * 40}px`, left: '0', transform: 'translateX(-50%)' }}
           >
-             <div className="absolute -top-12 left-1/2 -translate-x-1/2 text-4xl animate-bounce">🏆 FINISH 🏆</div>
+             <div className="absolute -top-12 left-1/2 -translate-x-1/2 text-4xl animate-bounce whitespace-nowrap">🏆 {GOAL_FLOOR}F FINISH 🏆</div>
              <div className="w-full h-full bg-[repeating-linear-gradient(45deg,#000,#000_10px,#fff_10px,#fff_20px)] opacity-50" />
           </div>
 
-          {Array.from({ length: 120 }).map((_, i) => {
+          {Array.from({ length: GOAL_FLOOR + 20 }).map((_, i) => {
             const stairIndex = floor - 5 + i;
             if (stairIndex < 0 || stairIndex > GOAL_FLOOR + 5) return null;
             const x = getStairX(stairIndex);
@@ -419,7 +426,6 @@ export const Game: React.FC<GameProps> = ({ roomId, uid, characterId, onFinish, 
           })}
 
           {!isPractice && 
-          /* Explicitly typing the entries to resolve the 'unknown' property errors */
           Object.entries(opponentFloors).map(([id, data]: [string, OpponentData]) => {
             const x = getStairX(data.floor);
             return (
