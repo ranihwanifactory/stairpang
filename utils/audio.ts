@@ -8,13 +8,36 @@ const sounds = {
   bonus: 'https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3'
 };
 
+const BGM_URL = 'https://assets.mixkit.co/music/preview/mixkit-game-level-music-689.mp3';
+let bgmInstance: HTMLAudioElement | null = null;
+
 export const playSound = (type: keyof typeof sounds) => {
   try {
     const audio = new Audio(sounds[type]);
     audio.volume = 0.2;
-    // 연속 입력 시 소리가 씹히지 않도록 오디오 재생 직전에 시간을 초기화하거나 새 인스턴스를 활용
     audio.play().catch(e => console.log('Audio blocked', e));
   } catch (e) {
     console.error('Audio play error', e);
+  }
+};
+
+export const startBGM = () => {
+  try {
+    if (!bgmInstance) {
+      bgmInstance = new Audio(BGM_URL);
+      bgmInstance.loop = true;
+      bgmInstance.volume = 0.1; // BGM은 효과음을 방해하지 않게 작게 설정
+    }
+    bgmInstance.currentTime = 0;
+    bgmInstance.play().catch(e => console.log('BGM blocked by browser policy', e));
+  } catch (e) {
+    console.error('BGM play error', e);
+  }
+};
+
+export const stopBGM = () => {
+  if (bgmInstance) {
+    bgmInstance.pause();
+    bgmInstance.currentTime = 0;
   }
 };
