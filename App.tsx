@@ -559,7 +559,7 @@ const App: React.FC = () => {
             </section>
 
             <div className="grid grid-cols-2 gap-4">
-              <button disabled={isProcessing || !profile} onClick={createRoom} className="bg-pink-500 text-white text-xl font-bold py-6 rounded-3xl shadow-lg border-b-4 border-pink-700 active:translate-y-1 active:shadow-none transition-all">대결 시작!</button>
+              <button disabled={isProcessing || !profile} onClick={createRoom} className="bg-pink-500 text-white text-xl font-bold py-6 rounded-3xl shadow-lg border-b-4 border-pink-700 active:translate-y-1 active:shadow-none transition-all">방 만들기</button>
               <button onClick={startPractice} className="bg-green-500 text-white text-xl font-bold py-6 rounded-3xl shadow-lg border-b-4 border-green-700 active:translate-y-1 active:shadow-none transition-all">혼자 연습</button>
             </div>
 
